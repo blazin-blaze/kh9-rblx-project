@@ -9,6 +9,7 @@ local TweenService=game:GetService("TweenService")
 local Debris=game:GetService("Debris")
 local Config=require(script.Parent.SpellConfig).Ultimate
 local Locks=require(script.Parent.MovementLocks)
+local Deflect=require(script.Parent.DeflectService)
 local Service={}
 local states={}
 local folder, getDirection
@@ -233,7 +234,7 @@ local function update(player,state,dt,time)
    -- Center-line obstruction stops the beam; this extra ray prevents wider edges hitting through walls.
    local cover=workspace:Raycast(origin,relative,params)
    if not cover or cover.Distance>=relative.Magnitude-0.1 then
-    targetH:TakeDamage(Config.MaxDamagePerSecond*active.power*elapsed)
+    Deflect.Damage(targetH,Config.MaxDamagePerSecond*active.power*elapsed)
    end
   end
  end

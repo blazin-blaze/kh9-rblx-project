@@ -10,6 +10,7 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
 local Spells = require(script.Parent.SpellService)
 
+local Deflect = require(script.Parent.DeflectService)
 local Fx = {}
 local LIMITS = {
 	codeLength = 6000, ops = 260, handles = 90, projectiles = 8, iterations = 4000,
@@ -355,7 +356,7 @@ function Fx.Run(player, code, direction, options)
 		if dry then return end
 		local used = damageTaken[h] or 0
 		local allowed = math.max(0, math.min(amount or 0, LIMITS.damage - used))
-		if allowed > 0 then h:TakeDamage(allowed); damageTaken[h] = used + allowed end
+		if allowed > 0 then Deflect.Damage(h,allowed); damageTaken[h] = used + allowed end
 		applyStatus(model, h, r, status, fromPos)
 	end
 	local function damageArea(pos, radius, amount, status, skip)
@@ -411,16 +412,34 @@ function Fx.Run(player, code, direction, options)
 			local accel = Vector3.new(0, -gravity, 0)
 			local radius = math.max(0.4, size * 0.5)
 			local t, last = 0, from
+			local owner,reflections=character,0
+			local flightParams=RaycastParams.new()
+			flightParams.FilterType=Enum.RaycastFilterType.Exclude
+			flightParams.FilterDescendantsInstances={owner}
 			while true do
 				t += RunService.Heartbeat:Wait()
 				if os.clock() > deadline then stop("ran too long") end
 				local pos = from + dir * speed * t + accel * (0.5 * t * t)
 				local step = pos - last
 				if step.Magnitude > 1e-4 then
-					local hit = workspace:Spherecast(last, radius, step, rayParams)
+					local hit = workspace:Spherecast(last, radius, step, flightParams)
+                        local defender,bubblePos=Deflect.Intercept(last,step,radius,owner,hit and hit.Distance)
+                        if defender then
+                            send({op="impact",id=id,pos=bubblePos,style=style,color=col,size=size,hit=false})
+                            local sourceRoot=owner and owner:FindFirstChild("HumanoidRootPart")
+                            if not sourceRoot or reflections>=8 then return bubblePos,false end
+                            local delta=sourceRoot.Position-bubblePos
+                            if delta.Magnitude<.01 then return bubblePos,false end
+                            dir=delta.Unit; from=bubblePos+dir*.1
+                            last=from; t=0; owner=defender; reflections+=1
+                            flightParams.FilterDescendantsInstances={owner}
+                            id=newId()
+                            send({op="projectile",id=id,from=from,dir=dir,speed=speed,range=range,size=size,gravity=gravity,style=style,color=col,caster=(game:GetService("Players"):GetPlayerFromCharacter(owner) or player).UserId})
+                            continue
+                        end
 					if hit then
 						hitPos, hitNormal = hit.Position, hit.Normal
-						hitModel, hitH, hitR = humanoidModel(hit.Instance, character)
+						hitModel, hitH, hitR = humanoidModel(hit.Instance, owner)
 						break
 					end
 				end

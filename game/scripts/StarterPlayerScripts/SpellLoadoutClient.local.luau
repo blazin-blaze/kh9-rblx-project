@@ -41,7 +41,8 @@ local PRESETS = {
 	{ id = "Flame", label = "Flame Spell", info = "Aimed fireball. 20 damage, then burns for 5 seconds." },
 	{ id = "Freeze", label = "Freeze Spell", info = "Ice bolt that freezes the target in place for 5 seconds." },
 	{ id = "Wave", label = "Wave Spell", info = "A wall of water that sweeps forward, pushing enemies and blocking shots." },
-	{ id = "Lightning", label = "Lightning", info = "A yellow lightning cone follows you for 3 seconds. Deals 2 damage every 0.1 seconds. 6 second cooldown." },
+	{ id = "Deflect", label = "Deflect Spell", info = "A protective bubble for 3 seconds. Reflects projectiles at their source and halves incoming damage. 8 second cooldown." },
+	{ id = "Lightning", label = "Lightning Spell", info = "A yellow lightning cone follows you for 3 seconds. Deals 5 damage every 0.1 seconds. 6 second cooldown." },
 }
 local DEFAULTS = { { name = "Flame", preset = 1 }, { name = "Freeze", preset = 2 }, { name = "Wave", preset = 3 } }
 local HINT = "The word you'll say to cast it"
@@ -245,6 +246,9 @@ end
 
 local function setPreset(card, index)
 	card.preset = index
+	card.nameBox.Text = PRESETS[index].id
+	card.hint.Text = HINT
+	card.hint.TextColor3 = C.soft
 	card.dd.label.Text = PRESETS[index].label
 	card.presetInfo.Text = PRESETS[index].info
 	setMode(card, "preset")

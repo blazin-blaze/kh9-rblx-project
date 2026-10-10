@@ -9,7 +9,7 @@ local Fx = require(script.Parent.SpellFx)
 local Forge = require(script.Parent.SpellForge)
 
 local Loadout = {}
-local PRESETS = { Flame = true, Freeze = true, Wave = true, Lightning = true }
+local PRESETS = { Flame = true, Freeze = true, Wave = true, Lightning = true, Deflect = true }
 local DEFAULT = {
 	{ name = "Flame", kind = "preset", preset = "Flame" },
 	{ name = "Freeze", kind = "preset", preset = "Freeze" },

@@ -5,6 +5,7 @@ local Debris = game:GetService("Debris")
 local TweenService = game:GetService("TweenService")
 local Config = require(script.Parent.SpellConfig)
 local Locks = require(script.Parent.MovementLocks)
+local Deflect = require(script.Parent.DeflectService)
 local Service = {}
 local freezes, burns, cooldowns, globalCooldowns = {}, {}, {}, {}
 local effects = workspace:FindFirstChild("VoiceArenaEffects") or Instance.new("Folder")
@@ -46,7 +47,7 @@ local function flame(character, impactDamage, burnSeconds)
   local h, root = alive(character)
   if not h then return end
   burnSeconds = burnSeconds or Config.Flame.BurnSeconds
-  if (impactDamage or Config.Flame.Damage) > 0 then h:TakeDamage(impactDamage or Config.Flame.Damage) end
+  if (impactDamage or Config.Flame.Damage) > 0 then Deflect.Damage(h,impactDamage or Config.Flame.Damage) end
   -- Recasting refreshes one burn; it never multiplies ticking tasks.
   if burns[h] then
     burns[h].untilTime = math.max(burns[h].untilTime, os.clock() + burnSeconds)
@@ -63,7 +64,7 @@ local function flame(character, impactDamage, burnSeconds)
       if not h.Parent or h.Health <= 0 or not root.Parent then break end
       -- Tick at t=1,2,3,4,5 (including the fifth second).
       if nextTick > state.untilTime + 0.02 then break end
-      h:TakeDamage(Config.Flame.BurnDamage)
+      Deflect.Damage(h,Config.Flame.BurnDamage)
       nextTick += 1
       if nextTick > state.untilTime + 0.02 then break end
     end
@@ -106,6 +107,8 @@ local function projectile(player, direction, spell)
   params.FilterDescendantsInstances = {player.Character}
   params.RespectCanCollide = false
   local traveled = 0
+  local owner=player.Character
+  local reflections=0
   task.spawn(function()
     local hitPos, hitNormal, target
     while traveled < cfg.Range do
@@ -113,10 +116,25 @@ local function projectile(player, direction, spell)
       local distance = math.min(cfg.Speed * dt, cfg.Range - traveled)
       local step = direction * distance
       local hit = workspace:Spherecast(position, 0.8, step, params)
+      local defender,bubblePos=Deflect.Intercept(position,step,.8,owner,hit and hit.Distance)
+      if defender then
+        fx({op=kind.."_impact",id=id,pos=bubblePos,hit=false})
+        local sourceRoot=owner and owner:FindFirstChild("HumanoidRootPart")
+        if not sourceRoot or reflections>=8 then return end
+        local delta=sourceRoot.Position-bubblePos
+        if delta.Magnitude<.01 then return end
+        direction=delta.Unit
+        owner=defender; reflections+=1; traveled=0
+        position=bubblePos+direction*.1
+        params.FilterDescendantsInstances={owner}
+        fxCounter+=1; id=fxCounter
+        fx({op=kind.."_cast",id=id,from=position,dir=direction,speed=cfg.Speed,range=cfg.Range,caster=(Players:GetPlayerFromCharacter(owner) or player).UserId})
+        continue
+      end
       if hit then
         hitPos, hitNormal = hit.Position, hit.Normal
         local character = targetFrom(hit.Instance)
-        if enemy(player, character) then target = character end
+        if character and character~=owner and alive(character) then target = character end
         break
       end
       position += step; traveled += distance
@@ -213,24 +231,36 @@ local function lightning(player)
         or character:GetAttribute("VoiceFrozen") or phase=="Preparing" or phase=="Intro" or phase=="Victory"
         or (inMatch and (phase~="Match" or not player:GetAttribute("InMatch"))) then break end
       local basis=root.CFrame*CFrame.new(0,0.6,-2)
-      local seen={}
-      for _,hit in ipairs(workspace:GetPartBoundsInBox(basis*CFrame.new(0,0,-cfg.Range/2),
-        Vector3.new(cfg.Radius*2,cfg.Radius*2,cfg.Range),overlap)) do
+      local pad=cfg.HitPadding or 0
+      -- Group the overlapping body parts by target. Any part inside the (padded) cone counts, not
+      -- just the HumanoidRootPart, so close or edge-of-cone targets are hit too.
+      local bodyParts={}
+      for _,hit in ipairs(workspace:GetPartBoundsInBox(basis*CFrame.new(0,0,(pad-cfg.Range)/2),
+        Vector3.new((cfg.Radius+pad)*2,(cfg.Radius+pad)*2,cfg.Range+pad),overlap)) do
         local target=targetFrom(hit)
-        if target and not seen[target] and enemy(player,target) then
-          seen[target]=true
-          local h,targetRoot=alive(target)
-          local targetPlayer=Players:GetPlayerFromCharacter(target)
-          local spectator=phase=="Match" and targetPlayer and not targetPlayer:GetAttribute("InMatch")
-          local friendly=targetPlayer and not player.Neutral and not targetPlayer.Neutral and targetPlayer.Team==player.Team
-          local point=basis:PointToObjectSpace(targetRoot.Position)
-          local depth=-point.Z
-          local radius=depth/cfg.Range*cfg.Radius
-          if not spectator and not friendly and depth>=0 and depth<=cfg.Range
-            and point.X*point.X+point.Y*point.Y<=radius*radius then
-            ray.FilterDescendantsInstances={character,effects,target}
-            if not workspace:Raycast(basis.Position,targetRoot.Position-basis.Position,ray) then
-              h:TakeDamage(cfg.TickDamage)
+        if target and (bodyParts[target] or enemy(player,target)) then
+          bodyParts[target]=bodyParts[target] or {}
+          table.insert(bodyParts[target],hit)
+        end
+      end
+      for target,hits in pairs(bodyParts) do
+        local h=alive(target)
+        local targetPlayer=Players:GetPlayerFromCharacter(target)
+        local spectator=phase=="Match" and targetPlayer and not targetPlayer:GetAttribute("InMatch")
+        local friendly=targetPlayer and not player.Neutral and not targetPlayer.Neutral and targetPlayer.Team==player.Team
+        if h and not spectator and not friendly then
+          for _,hit in ipairs(hits) do
+            local point=basis:PointToObjectSpace(hit.Position)
+            local depth=-point.Z
+            local radius=math.max(depth,0)/cfg.Range*cfg.Radius+pad
+            if depth>=-pad and depth<=cfg.Range and point.X*point.X+point.Y*point.Y<=radius*radius then
+              ray.FilterDescendantsInstances={character,effects,target}
+              if not workspace:Raycast(basis.Position,hit.Position-basis.Position,ray) then
+                Deflect.Damage(h,cfg.TickDamage)
+                -- LightningPresetFX draws a bolt locking onto this spot.
+                fx({op="lightning_hit",id=id,target=target,pos=hit.Position})
+                break
+              end
             end
           end
         end
@@ -243,7 +273,7 @@ end
 function Service.Cast(player, spell, direction)
   if remoteFolder:GetAttribute("MatchState") == "Victory" then return false, "A cinematic is playing" end
   local cfg = Config[spell]
-  if type(cfg) ~= "table" or not (spell == "Flame" or spell == "Freeze" or spell == "Wave" or spell == "Lightning") then return false, "Unknown spell" end
+  if type(cfg) ~= "table" or not (spell == "Flame" or spell == "Freeze" or spell == "Wave" or spell == "Lightning" or spell == "Deflect") then return false, "Unknown spell" end
   local h = alive(player.Character)
   if not h then return false, "Respawn first" end
   if player.Character:GetAttribute("VoiceFrozen") then return false, "You are frozen" end
@@ -256,7 +286,8 @@ function Service.Cast(player, spell, direction)
   if now < (globalCooldowns[player] or 0) then return false, "Speak one spell at a time" end
   cooldowns[player][spell] = now + cfg.Cooldown; globalCooldowns[player] = now + Config.GlobalCooldown
   direction = direction.Unit
-  if spell == "Lightning" then lightning(player)
+  if spell == "Deflect" then Deflect.Start(player.Character,presetFx)
+  elseif spell == "Lightning" then lightning(player)
   elseif spell == "Wave" then wave(player, direction) else projectile(player, direction, spell) end
   return true, cfg.Cooldown
 end
