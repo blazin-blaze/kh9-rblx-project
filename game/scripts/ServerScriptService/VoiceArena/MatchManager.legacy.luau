@@ -10,6 +10,8 @@ local RunService = game:GetService("RunService")
 local Loadout = require(script.Parent.Loadout)
 local Intro = require(script.Parent.MatchIntro)
 local ReadyZone = require(script.Parent.ReadyZone)
+local Victory = require(script.Parent.MatchVictory)
+local Ultimate = require(script.Parent.UltimateService)
 
 -- Solo test: with this script's SoloTest attribute ticked, one ready player is enough in Studio
 -- playtests, so matches can be tried alone. A solo match runs until that player dies or resets.
@@ -147,6 +149,13 @@ end
 local function runMatch()
 	set("Preparing", 0, "Preparing the arena")
 	local fighters = {} -- player -> the character they fight with; dying or respawning eliminates them
+ local eliminated, recorded, templates, connections = {}, {}, {}, {}
+ local function record(player)
+  if fighters[player] and not recorded[player] then
+   recorded[player]=true
+   table.insert(eliminated,player)
+  end
+ end
 	local ready = readyPlayers()
 	local spots, center = ringSpots(#ready)
 	for i, player in ipairs(ready) do
@@ -154,6 +163,10 @@ local function runMatch()
 		local ok, err = pcall(player.LoadCharacter, player)
 		if ok and player.Parent then
 			fighters[player] = player.Character
+    templates[player] = Victory.Capture(player.Character)
+    local h=player.Character and player.Character:FindFirstChildOfClass("Humanoid")
+    if h then table.insert(connections,h.Died:Connect(function() record(player) end)) end
+    table.insert(connections,player.CharacterAdded:Connect(function() record(player) end))
 			if player.Character then player.Character:SetAttribute("MatchSpawn", true) end
 			if spots and player.Character then
 				-- Drop in just above the ground, facing the ring's center.
@@ -168,8 +181,16 @@ local function runMatch()
 		end
 	end
 	Intro.Play(folder, fighters, spots, center, ready)
+ for player,character in pairs(fighters) do
+  if standing(player,character) then Ultimate.ResetCharge(player) end
+ end
 	local solo = next(fighters) ~= nil and next(fighters, next(fighters)) == nil
-	local startedAt = workspace:GetServerTimeNow()
+	local debugMoveOrigins = {}
+ for player,character in pairs(fighters) do
+  local root=character:FindFirstChild("HumanoidRootPart")
+  if root then debugMoveOrigins[player]=root.Position end
+ end
+ local startedAt = workspace:GetServerTimeNow()
 	print("[Match] Started" .. (solo and " (solo)" or ""))
 	while true do
 		local left = {}
@@ -177,21 +198,44 @@ local function runMatch()
 			if standing(player, character) then
 				table.insert(left, player)
 			else
+				record(player)
 				fighters[player] = nil
 				if player.Parent then player:SetAttribute("InMatch", nil) end
 				print("[Match] " .. player.Name .. " is out")
 			end
 		end
 		set("Match", startedAt, string.format("%d %s left", #left, #left == 1 and "player" or "players"))
-		if #left <= (solo and 0 or 1) then return left[1] end
-		task.wait(0.2)
+		local debugMovementWin=false
+  if RunService:IsStudio() and script:GetAttribute("DebugVictoryOnMove") and #left==1 then
+   local player=left[1]
+   local character=fighters[player]
+   local root=character and character:FindFirstChild("HumanoidRootPart")
+   local origin=debugMoveOrigins[player]
+   if root and origin then
+    local delta=root.Position-origin
+    local velocity=root.AssemblyLinearVelocity
+    debugMovementWin=Vector3.new(delta.X,0,delta.Z).Magnitude>0.1
+     and Vector3.new(velocity.X,0,velocity.Z).Magnitude>0.5
+   end
+  end
+  if debugMovementWin then print("[Match] Debug movement victory: "..left[1].Name) end
+  if debugMovementWin or #left <= (solo and 0 or 1) then
+   for _,connection in ipairs(connections) do connection:Disconnect() end
+   return left[1],eliminated,templates
+  end
+		RunService.Heartbeat:Wait()
 	end
 end
 
 while true do
 	waitForPlayers()
 	if intermission() then
-		local winner = runMatch()
+		local winner,eliminated,templates = runMatch()
+  if winner then
+   Victory.Play(folder,winner,eliminated,templates)
+  else
+   Victory.Cleanup(templates)
+  end
 		for _, player in ipairs(Players:GetPlayers()) do player:SetAttribute("InMatch", nil) end
 		local text = winner and (winner.DisplayName .. " wins!") or "Nobody survived. It's a draw"
 		print("[Match] " .. text)

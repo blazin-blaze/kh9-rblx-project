@@ -66,6 +66,20 @@ function Service.Cancel(player)
  local state=states[player]
  if state then finish(player,state) end
 end
+-- Start a fresh charge cycle when combat begins, after the intro cutscene.
+function Service.ResetCharge(player)
+ local state=states[player]
+ if not state then return end
+ finish(player,state)
+ state.rms=0
+ state.lastPacket=0
+ state.readyAt=now()+Config.ChargeSeconds
+ player:SetAttribute("UltimateChargeSeconds",Config.ChargeSeconds)
+ player:SetAttribute("UltimateReadyAt",state.readyAt)
+ player:SetAttribute("UltimateActive",false)
+ player:SetAttribute("UltimatePower",0)
+ player:SetAttribute("UltimateEndsAt",0)
+end
 function Service.Sample(player,character,rms)
  local state=states[player]
  if not state or character~=player.Character or not alive(character) then return end
@@ -120,7 +134,7 @@ function Service.Init(remoteFolder,directionGetter)
 end
 function Service.Cast(player)
  local phase=folder and folder:GetAttribute("MatchState")
- if phase=="Preparing" or phase=="Intro" then return false,"The match is about to begin" end
+ if phase=="Preparing" or phase=="Intro" or phase=="Victory" then return false,"The match is about to begin" end
  local state=states[player]
  if not state then return false,"Ultimate is loading" end
  if state.active then return false,"Ultimate is already firing" end

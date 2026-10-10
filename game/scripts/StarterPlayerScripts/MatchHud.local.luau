@@ -59,7 +59,7 @@ RunService.Heartbeat:Connect(function()
 		timer.Visible = true
 		timer.TextColor3 = WARN
 		timer.Text = tostring(math.max(0, math.ceil(time - now)))
-	elseif current == "Preparing" or current == "Intro" then
+	elseif current == "Preparing" or current == "Intro" or current == "Victory" then
 		holder.Visible = false
 	elseif current == "Match" then
 		local fighting = player:GetAttribute("InMatch") == true

@@ -24,6 +24,32 @@ local function benchFor(status, message)
 		return 20
 	end
 end
+-- Gemini API keys in the order they're tried: GeminiApiKey, then GeminiApiKey2, GeminiApiKey3, ...
+-- Every request goes to the first key that isn't benched. Gemini can't be asked how much quota a
+-- key has left, so a key is benched when Gemini turns it down: out of quota (429) for that model
+-- only, since quota is per model, or rejected (bad key) for every model. Once its bench ends, it is
+-- the first choice again.
+local KEYS = {}
+for i = 1, 10 do
+	local name = i == 1 and "GeminiApiKey" or "GeminiApiKey" .. i
+	local value = Secrets[name]
+	if type(value) == "string" and value ~= "" then table.insert(KEYS, { name = name, value = value }) end
+end
+local keyBenchedUntil = {} -- key name (every model) or "name|model" -> os.clock() time
+local activeKey = nil
+-- Seconds a key sits out after this failure and whether that covers every model, or nil when the
+-- failure isn't the key's fault (another key wouldn't do better). `body` is Gemini's raw error.
+local function keyBenchFor(status, body)
+	local lower = string.lower(body or "")
+	if status == 429 then
+		if string.find(lower, "perday", 1, true) or string.find(lower, "credit", 1, true) then return 3600, false end
+		local seconds = tonumber(string.match(lower, "retry in ([%d%.]+)s"))
+		return math.clamp(seconds or 60, 10, 600), false
+	elseif status == 401 or status == 403 or (status == 400 and string.find(lower, "api key", 1, true)) then
+		return 3600, true
+	end
+end
+
 local ENDPOINT = "https://generativelanguage.googleapis.com/v1beta/models/%s:generateContent"
 local LOADSTRING_HELP = "Roblox is blocking generated code. In Explorer select ServerScriptService, then tick LoadStringEnabled in Properties."
 
@@ -42,9 +68,9 @@ HARD RULES (code that breaks them is rejected)
 
 CONTEXT
 fx.origin     Vector3  point just in front of the caster's chest
-fx.direction  Vector3  unit aim direction (where the player is aiming)
+fx.direction  Vector3  unit avatar-facing direction (HumanoidRootPart.CFrame.LookVector; never the cursor)
 fx.caster     Vector3  caster's position
-fx.right, fx.up  Vector3  unit vectors relative to the aim
+fx.right, fx.up  Vector3  unit vectors relative to the avatar-facing direction
 
 STEP 1: PREFER PRESET EFFECTS. They are polished and include visuals, sound, camera shake and optional damage.
 Common opts for presets: style (string), color (Color3, tints the style), damage (number), status (string), radius (number)
@@ -80,7 +106,7 @@ fx:Destroy(handle)
 Handles without a duration fade out automatically when the spell ends.
 
 GAMEPLAY AND HELPERS
-fx:Aim(range?) -> Vector3            the point the player is aiming at (default range 100)
+fx:Aim(range?) -> Vector3            the point straight ahead of the avatar (default range 100); never a cursor position
 fx:FindEnemy(range?) -> Vector3|nil  nearest enemy roughly in front of the caster
 fx:Damage(position, radius, amount, status?) -> number of enemies hit
 fx:Forward(distance) -> Vector3      fx.origin + fx.direction * distance
@@ -183,7 +209,8 @@ local function extractText(decoded)
 	return table.concat(pieces)
 end
 
-local function request(model, contents, thinking)
+-- One Gemini call with one key. Returns spell, info, status; on an HTTP error also Gemini's raw body.
+local function send(model, contents, thinking, apiKey)
 	local generationConfig = {
 		responseMimeType = "application/json",
 		responseSchema = SCHEMA,
@@ -195,7 +222,7 @@ local function request(model, contents, thinking)
 		return HttpService:RequestAsync({
 			Url = string.format(ENDPOINT, model),
 			Method = "POST",
-			Headers = { ["content-type"] = "application/json", ["x-goog-api-key"] = Secrets.GeminiApiKey },
+			Headers = { ["content-type"] = "application/json", ["x-goog-api-key"] = apiKey },
 			Body = HttpService:JSONEncode({
 				systemInstruction = { parts = { { text = SYSTEM } } },
 				contents = contents,
@@ -208,7 +235,7 @@ local function request(model, contents, thinking)
 	if not response.Success then
 		local message = response.Body
 		pcall(function() message = HttpService:JSONDecode(response.Body).error.message end)
-		return nil, string.format("Gemini HTTP %d: %s", response.StatusCode, string.sub(tostring(message), 1, 220)), response.StatusCode
+		return nil, string.format("Gemini HTTP %d: %s", response.StatusCode, string.sub(tostring(message), 1, 220)), response.StatusCode, response.Body
 	end
 	local okJson, decoded = pcall(function() return HttpService:JSONDecode(response.Body) end)
 	if not okJson then return nil, "Gemini sent an unreadable response", 0 end
@@ -217,6 +244,33 @@ local function request(model, contents, thinking)
 	local okSpell, spell = pcall(function() return HttpService:JSONDecode(text) end)
 	if not okSpell or type(spell) ~= "table" then return nil, "Gemini's answer wasn't valid spell JSON", 0 end
 	return spell, text, 200
+end
+
+-- Tries the keys in order, skipping benched ones, and moves on to the next key when one is out of
+-- quota or rejected. Reports 429 when every usable key was out of quota, so callGemini benches the model.
+local function request(model, contents, thinking)
+	local lastInfo, lastStatus, rateLimited = nil, nil, false
+	for _, key in ipairs(KEYS) do
+		local now = os.clock()
+		if (keyBenchedUntil[key.name] or 0) <= now and (keyBenchedUntil[key.name .. "|" .. model] or 0) <= now then
+			local spell, info, status, body = send(model, contents, thinking, key.value)
+			if spell then
+				if activeKey ~= key.name then print("[SpellForge] Using " .. key.name) end
+				activeKey = key.name
+				return spell, info, status
+			end
+			local seconds, everyModel = keyBenchFor(status, body)
+			if not seconds then return nil, info, status end
+			keyBenchedUntil[everyModel and key.name or key.name .. "|" .. model] = os.clock() + seconds
+			if activeKey == key.name then activeKey = nil end
+			warn(string.format("[SpellForge] %s %s; benched for %ds, trying the next key", key.name,
+				everyModel and "was rejected" or ("is out of quota for " .. model), math.floor(seconds)))
+			lastInfo, lastStatus = info, status
+			if status == 429 then rateLimited = true end
+		end
+	end
+	if not lastInfo then return nil, "Every Gemini API key is out of quota for " .. model .. " right now", 429 end
+	return nil, lastInfo, rateLimited and 429 or lastStatus
 end
 
 -- Hedged requests: start with the model that last worked; if it hasn't answered after
@@ -260,7 +314,7 @@ local function callGemini(contents)
 					benchedUntil[model] = os.clock() + bench
 					if workingModel == model then workingModel = nil end
 				end
-				if status == 401 or status == 403 then fatal = true end -- bad key: other models won't help
+				if status == 401 or status == 403 then fatal = true end -- every key was rejected: other models won't help
 			end
 		end)
 	end
@@ -351,7 +405,7 @@ function Forge.Generate(player, name, prompt)
 	if type(prompt) ~= "string" then return { ok = false, error = "Describe your spell first" } end
 	prompt = trim(string.sub(prompt, 1, 400))
 	if #prompt < 3 then return { ok = false, error = "Describe your spell first" } end
-	if type(Secrets.GeminiApiKey) ~= "string" or Secrets.GeminiApiKey == "" then
+	if #KEYS == 0 then
 		return { ok = false, error = "Add a Gemini API key to ServerScriptService.VoiceArena.Secrets" }
 	end
 	local key = string.lower(prompt)

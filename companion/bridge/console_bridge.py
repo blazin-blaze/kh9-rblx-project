@@ -16,8 +16,9 @@ from pathlib import Path
 from urllib.parse import urlencode
 
 ROOT = Path(__file__).resolve().parent
-# Used until the player equips a loadout in Studio; the game then sends that player's 3 names.
+# Used until the player equips a loadout in Studio; the game then sends their spell and ultimate names.
 DEFAULT_SPELLS = ("Flame", "Freeze", "Wave")
+DEFAULT_ULTIMATE = "Ultimate"
 NAME_RE = re.compile(r"[A-Za-z]{1,20}")
 ERRORS = {"auth_error", "quota_exceeded", "transcriber_error", "input_error", "invalid_request",
           "error", "commit_throttled", "unaccepted_terms", "rate_limited", "queue_overflow",
@@ -82,16 +83,36 @@ def detect_spells(text, names=None):
     return list(dict.fromkeys(found))
 
 
-def detect_commands(text, names=None):
+def detect_commands(text, names=None, ultimate=DEFAULT_ULTIMATE):
     spells = detect_spells(text, names)
-    # The reserved ultimate command must match a whole word exactly, never a fuzzy near-match.
-    if isinstance(text, str) and "ultimate" in re.findall(r"\w+", text.lower()):
-        spells.append("Ultimate")
+    if ultimate.lower() == DEFAULT_ULTIMATE.lower():
+        # Preserve exact matching for the default word; "ultimately" must never fire it.
+        matched = isinstance(text, str) and "ultimate" in re.findall(r"\w+", text.lower())
+    else:
+        # Custom names use the same split-word and long-name tolerance as ordinary spells.
+        matched = bool(detect_spells(text, (ultimate,)))
+    if matched:
+        # Studio routes this canonical command to the death beam; it is never a spell slot.
+        spells.append(DEFAULT_ULTIMATE)
     return list(dict.fromkeys(spells))
 
 
 def spell_names(player):
     return tuple((player or {}).get("spells") or DEFAULT_SPELLS)
+
+
+def ultimate_word(player):
+    word = (player or {}).get("ultimate")
+    return word if isinstance(word, str) and NAME_RE.fullmatch(word) and len(word) >= 3 else DEFAULT_ULTIMATE
+
+
+def recognition_names(player):
+    """All activation words, including the ultimate, for Scribe hints and change detection."""
+    return (*spell_names(player), ultimate_word(player))
+
+
+def loadout_summary(player):
+    return f'Spell names: {", ".join(spell_names(player))}; ultimate word: {ultimate_word(player)}'
 
 
 class WordReceiver:
@@ -206,7 +227,8 @@ class ArenaStore:
             room = self.rooms.setdefault(session, {"players": {}, "commands": [], "updated": self.clock()})
             # "spells" is optional (older game builds omit it); invalid lists fall back to the defaults.
             roster = {p["userId"]: {**{k: p[k] for k in ("userId", "name", "life")},
-                                    "spells": clean_spells(p.get("spells"))} for p in players}
+                                    "spells": clean_spells(p.get("spells")),
+                                    "ultimate": ultimate_word(p)} for p in players}
             changed = roster != room["players"]
             room["players"] = roster
             room["updated"] = self.clock()
@@ -233,7 +255,7 @@ class ArenaStore:
             room = self.rooms[player["session"]]
             names = spell_names(player)
             emitted = []
-            for spell in detect_commands(event.get("text"), names):
+            for spell in detect_commands(event.get("text"), names, ultimate_word(player)):
                 now = self.clock()
                 if now - self.last_spell.get(spell, -float("inf")) < 0.75 or len(room["commands"]) >= 128:
                     continue
@@ -252,6 +274,7 @@ class ArenaStore:
 
 
 def handler_for(store, token):
+    auth_warning_at = [-float("inf")]
     class Handler(BaseHTTPRequestHandler):
         def log_message(self, *args):
             pass
@@ -277,6 +300,12 @@ def handler_for(store, token):
             if self.path != "/v1/poll":
                 return self.respond(404, {"error": "Not found"})
             if not hmac.compare_digest(self.headers.get("Authorization", ""), "Bearer " + token):
+                now = time.monotonic()
+                if now - auth_warning_at[0] >= 15:
+                    auth_warning_at[0] = now
+                    print("Studio reached the console, but its bridge token does not match. "
+                          "Check LocalConfig.cmd, bridge/.env, and SpellConfig.BridgeToken "
+                          "(not the ElevenLabs API key).", flush=True)
                 return self.respond(401, {"error": "Unauthorized"})
             try:
                 self.connection.settimeout(12)
@@ -347,7 +376,7 @@ def stream_session(ws, sd, device, rate, store, stop, terms=None):
     try:
         with sd.RawInputStream(samplerate=rate, blocksize=int(rate * 0.1), device=device,
                                dtype="int16", channels=1, callback=callback):
-            names = ", ".join(terms or spell_names(store.selected_player()))
+            names = ", ".join(terms or recognition_names(store.selected_player()))
             print(f"MICROPHONE ACTIVE. Say {names}; pause briefly. Ctrl+C stops.", flush=True)
             worker.start()
             while not stop.is_set():
@@ -355,9 +384,9 @@ def stream_session(ws, sd, device, rate, store, stop, terms=None):
                 if not player:
                     print("Studio player disconnected. Microphone paused until the playtest returns.", flush=True)
                     return
-                if terms is not None and spell_names(player) != tuple(terms):
+                if terms is not None and recognition_names(player) != tuple(terms):
                     # Keyterms are fixed per ElevenLabs session, so reconnect with the new names.
-                    print(f'Spell names changed to {", ".join(spell_names(player))}. Reconnecting to listen for them.', flush=True)
+                    print(f'{loadout_summary(player)}. Reconnecting to listen for the updated words.', flush=True)
                     return
                 if not errors.empty():
                     raise errors.get()
@@ -403,7 +432,7 @@ def select_player(store, preference=None):
         time.sleep(0.25)
     store.select(chosen)
     print(f'Controlling {chosen["name"]} (UserId {chosen["userId"]}). Respawns reconnect automatically.', flush=True)
-    print(f'Spell names: {", ".join(spell_names(chosen))} (change them in the game\'s Set Your Spells screen).', flush=True)
+    print(f'{loadout_summary(chosen)} (change them in the game\'s Set Your Spells screen).', flush=True)
 
 
 def recognize(api_key, store, stop, device=None, requested_rate=None, preference=None):
@@ -427,10 +456,10 @@ def recognize(api_key, store, stop, device=None, requested_rate=None, preference
     while not stop.is_set():
         if not store.selected_player():
             select_player(store, preference)
-        terms = spell_names(store.selected_player())
+        terms = recognition_names(store.selected_player())
         sent_keyterms = use_keyterms
         try:
-            url = websocket_url(rate, (*terms, "Ultimate") if sent_keyterms else None)
+            url = websocket_url(rate, terms if sent_keyterms else None)
             with connect(url, additional_headers={"xi-api-key": api_key}, open_timeout=10,
                          close_timeout=2, ping_interval=10, ping_timeout=5, compression=None, max_queue=16) as ws:
                 first = json.loads(ws.recv(timeout=10))
@@ -503,9 +532,9 @@ def main():
             print("DEMO: type a spell name, then Enter. Type quit to stop. No microphone or API calls.", flush=True)
             shown = None
             while not stop.is_set():
-                names = spell_names(store.selected_player())
+                names = recognition_names(store.selected_player())
                 if names != shown:
-                    print(f'Spell names: {", ".join(names)}', flush=True)
+                    print(loadout_summary(store.selected_player()), flush=True)
                     shown = names
                 text = input("> ")
                 if text.strip().lower() in {"quit", "exit"}:

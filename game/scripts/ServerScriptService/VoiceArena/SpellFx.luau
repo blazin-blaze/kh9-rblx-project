@@ -279,6 +279,7 @@ local castCounter = 0
 function Fx.Run(player, code, direction, options)
 	options = options or {}
 	local dry = options.dry == true
+	if not dry and folder:GetAttribute("MatchState") == "Victory" then return false, "A cinematic is playing", {} end
 	local fn, compileErr = Fx.Compile(code)
 	if not fn then return false, compileErr, {} end
 	local character, humanoid, root = characterOf(player)

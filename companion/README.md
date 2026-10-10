@@ -8,16 +8,16 @@ Implemented in **kh9 roblox project** (place ID **73454620887951**). This versio
 2. Paste your ElevenLabs Speech-to-Text API key at the hidden console prompt and press Enter. Nothing is shown while you type or paste. The console keeps the key in memory and does not save it.
 3. Press **Play** in Roblox Studio. The console automatically selects the player when there is only one. If several players are running locally, choose the player number in the console.
 4. In the game's **Set Your Spells** screen, name your 3 spells and pick a preset or describe an AI spell for each, then press **Begin**.
-5. Keep the console open, aim with your mouse in Roblox, and say one of your spell names, then pause briefly.
+5. Keep the console open, face your avatar toward your target in Roblox, and say one of your spell names, then pause briefly.
 6. Press **Ctrl+C** in the console to stop the microphone, ElevenLabs session, and local bridge.
 
 ## Custom spell names (Set Your Spells)
 
-The game sends each player's 3 spell names to this console on every poll. The console then:
+The game sends each player's 3 spell names and their ultimate word to this console on every poll. The console then:
 
-- passes the names to ElevenLabs Scribe as **keyterms**, so invented words like "Zorblax" are transcribed correctly (it reconnects automatically when the names change, because keyterms are set per session; if ElevenLabs rejects them, it carries on without them);
+- passes all four activation words to ElevenLabs Scribe as **keyterms**, so invented words like "Zorblax" are transcribed correctly (it reconnects automatically when any name changes, including just the ultimate, because keyterms are set per session; if ElevenLabs rejects them, it carries on without them);
 - casts when a confirmed phrase contains a name: exact words, two words joined together ("zor blax"), or, for names of 7+ letters, one misheard letter (two for 10+ letters). Short names must match exactly, so "frame" never casts "Flame";
-- sends `{ spell, slot }`; the game resolves the spoken name to that player's slot.
+- sends `{ spell, slot }` for ordinary spells; the game resolves the spoken name to that player's slot. The custom ultimate word sends `{ spell: "Ultimate" }` without a slot so Studio executes the death beam.
 
 Until a player presses Begin, the names are Flame, Freeze and Wave. In Studio, **F / G / H** cast slots 1 / 2 / 3 and **L** reopens the spell screen.
 
@@ -100,7 +100,7 @@ Local source edits do not automatically update Studio; the current changes were 
 
 ## Verification
 
-Nine automated Python tests passed: individual word delivery, cumulative-transcript deduplication, tentative-word revisions, exact matching, final-only casting, ACK/retry handling, debounce, TTL, respawn/leave invalidation, room isolation, spell-only long-poll wakeup, HTTP authentication, absence of a browser UI, correct audio payload, and simulated native microphone audio through the ElevenLabs WebSocket protocol.
+Twenty automated Python tests passed, covering individual word delivery, cumulative-transcript deduplication, tentative-word revisions, spell matching, custom ultimate routing, ultimate-only rename reconnection, per-player names, keyterms, default compatibility, ACK/retry handling, debounce, TTL, respawn/leave invalidation, room isolation, long-poll wakeup, HTTP authentication, absence of a browser UI, and simulated microphone audio through the ElevenLabs WebSocket protocol.
 
 The portable runtime imports successfully, the microphone device list works, and the default microphone accepts mono PCM16 at 16 kHz. Device checking did not capture audio. The prior live Studio spell tests verified all three mechanics.
 
@@ -121,13 +121,15 @@ References: [ElevenLabs Realtime API](https://elevenlabs.io/docs/api-reference/s
 
 This folder is the working companion source for `kh9-rblx-project`. Edit companion code here from now on.
 
-`Start.cmd` and `Demo.cmd` optionally load an ignored `LocalConfig.cmd`. On the current PC it sets `VOICE_ARENA_TOKEN_FILE` to the existing credential file outside the repository. That file was retained at `C:\Users\joshu\Documents\Codex\2026-10-10\x20\outputs\voice-arena\bridge\.env`; do not delete it while this configuration is in use.
+`Start.cmd` and `Demo.cmd` optionally load an ignored `LocalConfig.cmd`. On this PC, the stale override to the old output folder has been cleared. Both launchers now use `bridge/.env` in this repository; the companion creates it with the matching local Studio development token on first launch. A token mismatch now prints a specific message instead of silently waiting for Studio.
 
-On another PC, copy `bridge/.env.example` to the ignored `bridge/.env` and provide the private token matching Studio's `SpellConfig.BridgeToken`. The ElevenLabs API key is still entered at the hidden console prompt and is not saved.
+On another PC, launch normally to generate the local development configuration. If you customize the bridge token, provide the same value in the ignored `bridge/.env` and Studio's `SpellConfig.BridgeToken`. The ElevenLabs API key is still entered at the hidden console prompt and is not saved.
 
 ## Ultimate
 
-Say **ultimate** when the game HUD is ready. This reserved command works alongside any loadout. Roblox microphone RMS controls the five-second death beam; ElevenLabs recognizes the activation word. See [Ultimate setup and tuning](../docs/ultimate.md). Restart this console after updating.
+Choose an ultimate word in **Set Your Spells**, press **Begin**, and say that word when the game HUD is ready. The console shows the current ultimate word alongside your three spell names. It defaults to **Ultimate** until you customize it. After renaming it, say the new word; the old word is no longer an activation alias.
+
+Custom ultimate names use the same recognition rules as other spells, including split invented names and limited tolerance for longer names. The default **Ultimate** still requires an exact whole-word match. Tentative words never cast. Demo mode accepts the current ultimate word too. Roblox microphone RMS controls the five-second death beam; ElevenLabs recognizes the activation word. See [Ultimate setup and tuning](../docs/ultimate.md). Restart a running console once after updating its code; subsequent in-game name changes reconnect automatically.
 
 ## First run from GitHub
 

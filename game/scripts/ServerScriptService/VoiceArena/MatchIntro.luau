@@ -63,6 +63,7 @@ function Intro.Play(folder, fighters, spots, center, ready)
   local ground = workspace:Raycast(at+Vector3.new(0,60,0), Vector3.new(0,-120,0),params)
   at = Vector3.new(at.X, ground and ground.Position.Y or center.Y, at.Z) + Vector3.new(0,h.HipHeight+root.Size.Y/2,0)
   char:PivotTo(CFrame.lookAt(at, at+Vector3.zAxis))
+  staged[p].lineupPivot=char:GetPivot()
   root.AssemblyLinearVelocity=Vector3.zero
   root.AssemblyAngularVelocity=Vector3.zero
   root.Anchored=true
@@ -75,6 +76,26 @@ function Intro.Play(folder, fighters, spots, center, ready)
  -- A short fixed track keeps the camera on the fighters for the full three seconds.
  local left = Vector3.new(base.X-8,y,base.Z)
  local right = Vector3.new(base.X+8,y,base.Z)
+ -- Hold the real fighters in the lobby until the rune-circle shot is over.
+ local spawn=maps and maps:FindFirstChild("SpawnLocation")
+ if spawn then
+  local columns=math.max(1,math.ceil(math.sqrt(#lineup)))
+  for i,p in ipairs(lineup) do
+   local char=fighters[p]
+   local held=staged[p]
+   local root=held.root
+   local h=held.humanoid
+   local height=h.HipHeight+root.Size.Y/2
+   if h.RigType==Enum.HumanoidRigType.R6 then
+    local leg=char:FindFirstChild("Left Leg")
+    height+=leg and leg.Size.Y or 2
+   end
+   local x=((i-1)%columns-(columns-1)/2)*4
+   local z=(math.floor((i-1)/columns)-(math.ceil(#lineup/columns)-1)/2)*4
+   local at=spawn.Position+Vector3.new(x,spawn.Size.Y/2+height+0.2,z)
+   char:PivotTo(CFrame.new(at)*root.CFrame.Rotation*root.CFrame:Inverse()*char:GetPivot())
+  end
+ end
  -- Two brief establishing shots: skull waterfall, then the glowing arena runes.
  folder:SetAttribute("IntroOpeningDuration", OPENING_SHOT)
  folder:SetAttribute("IntroOpening1From", CFrame.lookAt(center+Vector3.new(-100,60,70),center+Vector3.new(-130,40,-60)))
@@ -97,6 +118,17 @@ function Intro.Play(folder, fighters, spots, center, ready)
  folder:SetAttribute("MatchText","MEET THE CHALLENGERS")
  folder:SetAttribute("MatchTime",start+TOTAL)
  local ok,err=pcall(function()
+  while workspace:GetServerTimeNow()<start+OPENING_SHOT*2 do task.wait(0.03) end
+  -- The statue pullback begins now; bring fighters into their saved lineup positions.
+  for _,p in ipairs(lineup) do
+   local held=staged[p]
+   local char=fighters[p]
+   if p.Character==char and char.Parent and held.humanoid.Health>0 then
+    char:PivotTo(held.lineupPivot)
+    held.root.AssemblyLinearVelocity=Vector3.zero
+    held.root.AssemblyAngularVelocity=Vector3.zero
+   end
+  end
   while workspace:GetServerTimeNow()<start+TOTAL do task.wait(0.1) end
  end)
  -- Always release the exact characters staged, even after a reset or disconnect.

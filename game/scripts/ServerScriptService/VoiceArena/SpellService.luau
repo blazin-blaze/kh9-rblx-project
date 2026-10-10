@@ -190,9 +190,60 @@ local function wave(player, direction)
     for targetRoot in pairs(pushed) do if targetRoot.Parent and not targetRoot.Anchored then pcall(function() targetRoot:SetNetworkOwnershipAuto() end) end end
   end)
 end
+local function lightning(player)
+  local character=player.Character
+  local _,root=alive(character)
+  if not root then return end
+  local cfg=Config.Lightning
+  local inMatch=remoteFolder:GetAttribute("MatchState")=="Match"
+  fxCounter+=1
+  local id=fxCounter
+  local endsAt=workspace:GetServerTimeNow()+cfg.Duration
+  fx({op="lightning_cast",id=id,target=character,caster=player.UserId,endsAt=endsAt,range=cfg.Range,radius=cfg.Radius})
+  local overlap=OverlapParams.new()
+  overlap.FilterType=Enum.RaycastFilterType.Exclude
+  overlap.FilterDescendantsInstances={character,effects}
+  local ray=RaycastParams.new()
+  ray.FilterType=Enum.RaycastFilterType.Exclude
+  ray.RespectCanCollide=true
+  task.spawn(function()
+    while workspace:GetServerTimeNow()<endsAt do
+      local phase=remoteFolder:GetAttribute("MatchState")
+      if not player.Parent or player.Character~=character or not alive(character)
+        or character:GetAttribute("VoiceFrozen") or phase=="Preparing" or phase=="Intro" or phase=="Victory"
+        or (inMatch and (phase~="Match" or not player:GetAttribute("InMatch"))) then break end
+      local basis=root.CFrame*CFrame.new(0,0.6,-2)
+      local seen={}
+      for _,hit in ipairs(workspace:GetPartBoundsInBox(basis*CFrame.new(0,0,-cfg.Range/2),
+        Vector3.new(cfg.Radius*2,cfg.Radius*2,cfg.Range),overlap)) do
+        local target=targetFrom(hit)
+        if target and not seen[target] and enemy(player,target) then
+          seen[target]=true
+          local h,targetRoot=alive(target)
+          local targetPlayer=Players:GetPlayerFromCharacter(target)
+          local spectator=phase=="Match" and targetPlayer and not targetPlayer:GetAttribute("InMatch")
+          local friendly=targetPlayer and not player.Neutral and not targetPlayer.Neutral and targetPlayer.Team==player.Team
+          local point=basis:PointToObjectSpace(targetRoot.Position)
+          local depth=-point.Z
+          local radius=depth/cfg.Range*cfg.Radius
+          if not spectator and not friendly and depth>=0 and depth<=cfg.Range
+            and point.X*point.X+point.Y*point.Y<=radius*radius then
+            ray.FilterDescendantsInstances={character,effects,target}
+            if not workspace:Raycast(basis.Position,targetRoot.Position-basis.Position,ray) then
+              h:TakeDamage(cfg.TickDamage)
+            end
+          end
+        end
+      end
+      task.wait(cfg.TickSeconds)
+    end
+    fx({op="lightning_end",id=id})
+  end)
+end
 function Service.Cast(player, spell, direction)
+  if remoteFolder:GetAttribute("MatchState") == "Victory" then return false, "A cinematic is playing" end
   local cfg = Config[spell]
-  if type(cfg) ~= "table" or not (spell == "Flame" or spell == "Freeze" or spell == "Wave") then return false, "Unknown spell" end
+  if type(cfg) ~= "table" or not (spell == "Flame" or spell == "Freeze" or spell == "Wave" or spell == "Lightning") then return false, "Unknown spell" end
   local h = alive(player.Character)
   if not h then return false, "Respawn first" end
   if player.Character:GetAttribute("VoiceFrozen") then return false, "You are frozen" end
@@ -205,7 +256,8 @@ function Service.Cast(player, spell, direction)
   if now < (globalCooldowns[player] or 0) then return false, "Speak one spell at a time" end
   cooldowns[player][spell] = now + cfg.Cooldown; globalCooldowns[player] = now + Config.GlobalCooldown
   direction = direction.Unit
-  if spell == "Wave" then wave(player, direction) else projectile(player, direction, spell) end
+  if spell == "Lightning" then lightning(player)
+  elseif spell == "Wave" then wave(player, direction) else projectile(player, direction, spell) end
   return true, cfg.Cooldown
 end
 -- Status effects reused by AI-generated spells (SpellFx). Burn adds no impact damage.

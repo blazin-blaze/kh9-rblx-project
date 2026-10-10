@@ -8,8 +8,11 @@ import time
 import unittest
 import urllib.error
 import urllib.request
+from unittest.mock import Mock, patch
+from urllib.parse import parse_qs, urlparse
+from types import SimpleNamespace
 from http.server import ThreadingHTTPServer
-from console_bridge import ArenaStore, WordReceiver, audio_message, detect_commands, detect_spells, handler_for, stream_session, websocket_url
+from console_bridge import ArenaStore, WordReceiver, audio_message, detect_commands, detect_spells, handler_for, recognize, recognition_names, stream_session, ultimate_word, websocket_url
 
 ROSTER = [{"userId": -1, "name": "Player1", "life": "life1"}]
 
@@ -50,6 +53,98 @@ class ConsoleTests(unittest.TestCase):
         self.assertNotIn("slot", command)
         self.assertEqual(command["life"], "life1")
         self.assertEqual(detect_commands("ultimate", ("Flame", "Freeze", "Wave")), ["Ultimate"])
+
+    def test_custom_ultimate_routes_to_death_beam_without_a_slot(self):
+        store = ArenaStore()
+        roster = [{**ROSTER[0], "spells": ["Zorblax", "Ice", "Wave"], "ultimate": "Nova"}]
+        store.poll("studio", roster)
+        store.select(store.roster()[0])
+        self.assertEqual(recognition_names(store.selected_player()), ("Zorblax", "Ice", "Wave", "Nova"))
+        self.assertEqual(store.event({"message_type": "partial_transcript", "text": "Nova!"}), [])
+        self.assertEqual(store.event({"message_type": "committed_transcript", "text": "ultimate novas supernova nova2 _nova"}), [])
+        self.assertEqual(store.event({"message_type": "committed_transcript", "text": "NOVA!"}), ["Ultimate"])
+        command = store.poll("studio", roster)["commands"][0]
+        self.assertEqual(command["spell"], "Ultimate")
+        self.assertNotIn("slot", command)
+        self.assertEqual((command["userId"], command["life"]), (-1, "life1"))
+
+    def test_custom_ultimate_matches_invented_names_like_other_spells(self):
+        for text in ("ZOR BLAX!", "zorblux"):
+            self.assertEqual(detect_commands(text, ("Flame", "Ice", "Wave"), "Zorblax"), ["Ultimate"])
+        self.assertEqual(detect_commands("thundrstrik", ("Flame", "Ice", "Wave"), "Thunderstrike"), ["Ultimate"])
+        self.assertEqual(detect_commands("wave nova", ultimate="Nova"), ["Wave", "Ultimate"])
+
+    def test_ultimate_rename_and_player_selection_refresh_recognition(self):
+        now = [100.0]
+        store = ArenaStore(clock=lambda: now[0])
+        first = {**ROSTER[0], "ultimate": "Nova"}
+        second = {"userId": -2, "name": "Player2", "life": "life2", "ultimate": "Eclipse"}
+        store.poll("studio", [first, second])
+        store.select(store.roster()[0])
+        previous = recognition_names(store.selected_player())
+        first = {**first, "ultimate": "Thunderstrike"}
+        store.poll("studio", [first, second])
+        self.assertNotEqual(previous, recognition_names(store.selected_player()))
+        self.assertEqual(store.event({"message_type": "committed_transcript", "text": "Nova ultimate eclipse"}), [])
+        self.assertEqual(store.event({"message_type": "committed_transcript", "text": "Thunderstrike"}), ["Ultimate"])
+        command = store.poll("studio", [first, second])["commands"][0]
+        store.poll("studio", [first, second], [command["id"]])
+        store.select(store.roster()[1])
+        self.assertEqual(ultimate_word(store.selected_player()), "Eclipse")
+        self.assertEqual(store.event({"message_type": "committed_transcript", "text": "Thunderstrike"}), [])
+        self.assertEqual(store.event({"message_type": "committed_transcript", "text": "Eclipse"}), ["Ultimate"])
+        self.assertEqual(store.poll("studio", [first, second])["commands"][0]["userId"], -2)
+
+    def test_missing_or_invalid_ultimate_names_use_default(self):
+        for bad in (None, "", "two words", "x" * 21, "ab", "Nova2", 42, ["Nova"]):
+            store = ArenaStore()
+            roster = [{**ROSTER[0], "ultimate": bad}]
+            store.poll("studio", roster)
+            store.select(store.roster()[0])
+            self.assertEqual(ultimate_word(store.selected_player()), "Ultimate")
+            self.assertEqual(store.event({"message_type": "committed_transcript", "text": "Ultimate!"}), ["Ultimate"])
+
+    def test_stream_returns_to_reconnect_when_only_ultimate_changes(self):
+        store, stop = ArenaStore(), threading.Event()
+        roster = [{**ROSTER[0], "ultimate": "Nova"}]
+        store.poll("studio", roster)
+        store.select(store.roster()[0])
+        terms = recognition_names(store.selected_player())
+        store.poll("studio", [{**ROSTER[0], "ultimate": "Eclipse"}])
+        stream = Mock()
+        stream.__enter__ = Mock(return_value=stream)
+        stream.__exit__ = Mock(return_value=False)
+        sd = SimpleNamespace(RawInputStream=Mock(return_value=stream))
+        ws = Mock()
+        with patch("builtins.print") as output:
+            stream_session(ws, sd, None, 16000, store, stop, terms)
+        ws.close.assert_called_once()
+        ws.recv.assert_not_called()
+        self.assertTrue(any("Eclipse" in str(call) and "Reconnecting" in str(call) for call in output.call_args_list))
+
+    def test_recognize_sends_custom_ultimate_keyterms_on_every_session(self):
+        store, stop = ArenaStore(), threading.Event()
+        roster = [{**ROSTER[0], "ultimate": "Nova"}]
+        store.poll("studio", roster)
+        store.select(store.roster()[0])
+        sd = SimpleNamespace(check_input_settings=Mock(), query_devices=Mock(return_value={"name": "simulated"}))
+        sessions = []
+
+        def run_session(ws, device_api, device, rate, arena, stopping, terms):
+            sessions.append(tuple(terms))
+            if len(sessions) == 1:
+                arena.poll("studio", [{**ROSTER[0], "ultimate": "Eclipse"}])
+            else:
+                stopping.set()
+
+        with patch.dict("sys.modules", {"sounddevice": sd}), \
+                patch("websockets.sync.client.connect") as connect, \
+                patch("console_bridge.stream_session", side_effect=run_session), patch("builtins.print"):
+            connect.return_value.__enter__.return_value.recv.return_value = json.dumps({"message_type": "session_started"})
+            recognize("test-key", store, stop, requested_rate=16000)
+        self.assertEqual(sessions, [("Flame", "Freeze", "Wave", "Nova"), ("Flame", "Freeze", "Wave", "Eclipse")])
+        terms = [parse_qs(urlparse(call.args[0]).query)["keyterms"] for call in connect.call_args_list]
+        self.assertEqual(terms, [list(names) for names in sessions])
 
 
     def test_individual_words_ignore_cumulative_replays_and_cast_only_confirmed_words(self):
@@ -189,13 +284,20 @@ class ConsoleTests(unittest.TestCase):
             with self.assertRaises(urllib.error.HTTPError) as error:
                 urllib.request.urlopen(base + "/")
             self.assertEqual(error.exception.code, 404)
-            body = json.dumps({"session": "studio", "players": ROSTER, "ack": []}).encode()
+            roster = [{**ROSTER[0], "ultimate": "Nova"}]
+            body = json.dumps({"session": "studio", "players": roster, "ack": []}).encode()
             with self.assertRaises(urllib.error.HTTPError) as error:
                 urllib.request.urlopen(urllib.request.Request(base + "/v1/poll", body))
             self.assertEqual(error.exception.code, 401)
             request = urllib.request.Request(base + "/v1/poll", body, {"Authorization": "Bearer " + token})
             with urllib.request.urlopen(request) as response:
                 self.assertEqual(json.load(response)["players"][0]["userId"], -1)
+            store.select(store.roster()[0])
+            self.assertEqual(store.event({"message_type": "committed_transcript", "text": "Nova!"}), ["Ultimate"])
+            with urllib.request.urlopen(request) as response:
+                command = json.load(response)["commands"][0]
+                self.assertEqual(command["spell"], "Ultimate")
+                self.assertNotIn("slot", command)
         finally:
             server.shutdown()
             server.server_close()
@@ -206,14 +308,16 @@ class ConsoleTests(unittest.TestCase):
         from websockets.sync.client import connect
         store, stop = ArenaStore(), threading.Event()
         register(store)
+        roster = [{**ROSTER[0], "ultimate": "Nova"}]
+        store.poll("studio", roster)
         errors, audio_seen = [], []
 
         def scribe(ws):
             try:
                 payload = json.loads(ws.recv(timeout=2))
                 audio_seen.append(payload)
-                ws.send(json.dumps({"message_type": "partial_transcript", "text": "Freeze"}))
-                ws.send(json.dumps({"message_type": "committed_transcript", "text": "Freeze"}))
+                ws.send(json.dumps({"message_type": "partial_transcript", "text": "Nova"}))
+                ws.send(json.dumps({"message_type": "committed_transcript", "text": "Nova"}))
                 while not stop.wait(0.05):
                     pass
             except Exception as error:
@@ -244,14 +348,15 @@ class ConsoleTests(unittest.TestCase):
                 capture = threading.Thread(target=run_capture)
                 capture.start()
                 deadline = time.monotonic() + 2
-                while not store.poll("studio", ROSTER)["commands"] and time.monotonic() < deadline:
+                while not store.poll("studio", roster)["commands"] and time.monotonic() < deadline:
                     time.sleep(0.02)
-                result = store.poll("studio", ROSTER)
+                result = store.poll("studio", roster)
                 stop.set()
                 capture.join(2)
                 self.assertFalse(capture.is_alive())
                 self.assertEqual(errors, [])
-                self.assertEqual(result["commands"][0]["spell"], "Freeze")
+                self.assertEqual(result["commands"][0]["spell"], "Ultimate")
+                self.assertNotIn("slot", result["commands"][0])
                 self.assertEqual(audio_seen[0]["message_type"], "input_audio_chunk")
                 self.assertEqual(len(base64.b64decode(audio_seen[0]["audio_base_64"])), 3200)
             server.shutdown()

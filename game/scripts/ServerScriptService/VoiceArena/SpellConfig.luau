@@ -8,6 +8,7 @@ return {
   Flame = { Cooldown = 2, Damage = 20, BurnDamage = 4, BurnSeconds = 5, Speed = 100, Range = 110 },
   Freeze = { Cooldown = 7, Duration = 5, Speed = 90, Range = 100 },
   Wave = { Cooldown = 8, Duration = 5, Speed = 18, Width = 24, Height = 12, Depth = 5, PushSpeed = 30 },
+  Lightning = { Cooldown = 6, Duration = 3, Range = 28, Radius = 12, TickSeconds = 0.1, TickDamage = 2 },
   -- AI spells made in the loadout screen (SpellForge + SpellFx).
   Custom = { Cooldown = 4 },
   Gemini = {

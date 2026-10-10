@@ -25,7 +25,8 @@ local BACK, OUT = Enum.EasingStyle.Back, Enum.EasingDirection.Out
 local SFX = {
 	fireCast = 7106659874, fireBlast = 2741718865, fireTravel = 9114428742, fireBoom = 139900006476219,
 	fireImpact = 139321522575273, boom = 138533090376585, fireLoop = 134764135613302, flameDash = 86457257192248,
-	iceCast = 87535244973896, iceCrackle = 103299884118401, iceCreak = 9118762668, glassBreak = 113962075032286,
+	-- Ice foley courtesy of Pro Sound Effects: block cracks and ice shattering.
+	iceCast = 9114858588, iceCrackle = 9114858583, iceShatter = 9114855870,
 	surge1 = 9120606857, surge3 = 9120607089, waveLoop = 135677767817157, poolSplash = 9117822527,
 	splash5 = 9119482201, splash1 = 9119481909, slam = 91288569991875, summon = 99963459517796,
 }
@@ -496,9 +497,7 @@ local function frostCast(op)
 			Lifetime = FX.nr(0.8, 1.3), Size = FX.nseq(0, 2, 1, 6), Transparency = FX.nseq(0, 0.5, 1, 1), Color = ColorSequence.new(I.mist),
 			LightEmission = 0.3 }):Emit(26)
 	end
-	play(SFX.iceCast, muzzle, 1.2, 1)
-	play(SFX.iceCrackle, muzzle, 0.8, 1.2)
-	FX.sound(FX.SND.unsheath, muzzle, 0.6, 1.3)
+	play(SFX.iceCast, muzzle, 0.7, 1.25, { near = 15, far = 100 })
 	if isLocal(op.caster) then
 		Cam.kick("fov", 8, 0.05, 0.04, 0.5)
 		Cam.kick("push", -1.1, 0.05, 0.03, 0.45)
@@ -533,7 +532,8 @@ local function frostCast(op)
 	addTrail(core, 0.8, 0.45, FX.cseq(I.frost, I.ice, I.deep))
 	local light = Instance.new("PointLight"); light.Color = I.ice; light.Brightness = 5; light.Range = 18; light.Shadows = false; light.Parent = core
 	local loop = Instance.new("Sound")
-	loop.SoundId, loop.Looped, loop.Volume, loop.PlaybackSpeed, loop.RollOffMinDistance = FX.SND.whoosh, true, 0.5, 1.5, 15
+	loop.SoundId, loop.Looped, loop.Volume, loop.PlaybackSpeed, loop.RollOffMinDistance = SFX.iceCrackle, true, 0.18, 1.15, 10
+	loop.RollOffMaxDistance = 80
 	loop.Parent = core
 	loop:Play()
 	local lastShed, lastFrost = 0, 0
@@ -607,9 +607,7 @@ local function frostImpact(op)
 		cracks(gp + gn * 0.04, gn, I.ice, 9, 3 * scale, 7 * scale, 1)
 	end
 	FX.flashLight(pos, I.ice, 14, 45, 0.9)
-	play(SFX.iceCrackle, pos, 1.3, 1)
-	play(SFX.glassBreak, pos, 0.9, 0.85)
-	task.delay(0.85, function() play(SFX.glassBreak, pos, 0.6, 1.2) end)
+	play(SFX.iceShatter, pos, 0.85, 0.95, { near = 15, far = 120 })
 	local p = Cam.shakeAt(pos, 0.85 * scale, 70)
 	if p > 0 then
 		Cam.grade({ tint = rgb(175, 220, 255), saturation = -0.4 * p, contrast = 0.28 * p, brightness = 0.14 * p, blur = 6 * p,
@@ -680,8 +678,7 @@ local function freeze(op)
 	hl.Parent = FX.folder
 	st.highlight = hl
 	FX.pop(root.Position, I.frost, 2, 11, 0.25, nil, 0.2)
-	play(SFX.iceCrackle, root, 1.2, 0.9)
-	st.creak = play(SFX.iceCreak, root, 0.7, 1, { life = 9, near = 15 })
+	st.creak = play(SFX.iceCrackle, root, 0.18, 0.9, { loop = true, near = 10, far = 60 })
 	st.conn = RunService.RenderStepped:Connect(function()
 		for _, f in ipairs(st.followers) do
 			if f[1].Parent and f[2].Parent then f[1].CFrame = f[2].CFrame * f[3] end
@@ -721,8 +718,7 @@ local function thaw(op)
 		FX.emitter(a, { Texture = FX.TEX.smoke, SpreadAngle = Vector2.new(180, 180), Speed = FX.nr(4, 10), Drag = 3,
 			Lifetime = FX.nr(0.8, 1.4), Size = FX.nseq(0, 2, 1, 6), Transparency = FX.nseq(0, 0.5, 1, 1), Color = ColorSequence.new(I.mist),
 			LightEmission = 0.3 }):Emit(16)
-		play(SFX.glassBreak, pos, 1.2, 1)
-		FX.sound(FX.SND.glass, pos, 0.6, 1.2)
+		play(SFX.iceShatter, pos, 0.65, 1.1, { near = 15, far = 100 })
 		Cam.shakeAt(pos, 0.4, 40)
 	end
 end

@@ -2,17 +2,12 @@
 -- Circular wall around Workspace.Maps.RingModel that keeps fighters in the arena. It only exists
 -- while a match runs (MatchState == "Match" on ReplicatedStorage.VoiceArena, set by MatchManager);
 -- outside matches anyone can walk in and out. The walls only collide with characters: CanQuery and
--- CanTouch are off so spell raycasts and hitboxes pass through. Walls can still be beaten by jumping
--- over, dashes, knockback or exploits, so the server also pulls any fighter (InMatch) who ends up
--- outside back in.
-local Players = game:GetService("Players")
+-- CanTouch are off so spell raycasts and hitboxes pass through.
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local RunService = game:GetService("RunService")
 
 local SEGMENTS = 64      -- wall pieces around the circle
 local WALL_HEIGHT = 60   -- studs above the ring's base
 local WALL_THICKNESS = 2
-local PULL_BACK = 6      -- fighters past the edge are placed this many studs inside it
 local VISIBLE = 0.75     -- wall transparency during a match
 
 local state = ReplicatedStorage:WaitForChild("VoiceArena")
@@ -48,28 +43,9 @@ local function setActive(active)
 		wall.Transparency = active and VISIBLE or 1
 	end
 end
-setActive(false)
+local function update()
+	setActive(state:GetAttribute("MatchState") == "Match")
+end
+update()
 barrier.Parent = workspace
-
-local active = false
-RunService.Heartbeat:Connect(function()
-	local now = state:GetAttribute("MatchState") == "Match"
-	if now ~= active then
-		active = now
-		setActive(now)
-	end
-	if not active then return end
-	for _, player in ipairs(Players:GetPlayers()) do
-		local character = player.Character
-		local root = character and character:FindFirstChild("HumanoidRootPart")
-		if player:GetAttribute("InMatch") and root then
-			local offset = Vector3.new(root.Position.X - center.X, 0, root.Position.Z - center.Z)
-			if offset.Magnitude > radius - 1 then
-				local inside = center + offset.Unit * (radius - PULL_BACK)
-				local y = math.max(root.Position.Y, baseY + 4)
-				character:PivotTo(CFrame.new(inside.X, y, inside.Z) * character:GetPivot().Rotation)
-				root.AssemblyLinearVelocity = Vector3.zero
-			end
-		end
-	end
-end)
+state:GetAttributeChangedSignal("MatchState"):Connect(update)

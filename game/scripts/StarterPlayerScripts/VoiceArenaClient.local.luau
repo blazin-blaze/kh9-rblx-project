@@ -1,20 +1,28 @@
 -- StarterPlayer.StarterPlayerScripts.VoiceArenaClient (LocalScript)
--- Mouse aim and the spell HUD (spells are cast by voice only): one circle per equipped spell. On cast a grey
--- clock-wipe overlay sweeps away with the seconds remaining on top; the ring pulses when ready.
+-- Avatar-facing spells and the spell HUD (spells are cast by voice only): one circle per equipped spell. On cast a grey
+-- clock-wipe overlay sweeps away inside the illustrated ring with the seconds remaining on top; a teal
+-- glow flashes when it's ready. Slot art: SLOT_ART below.
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
 local TweenService = game:GetService("TweenService")
 local player = Players.LocalPlayer
-local mouse = player:GetMouse()
 local remotes = ReplicatedStorage:WaitForChild("VoiceArena")
-local feedback, aim = remotes:WaitForChild("Feedback"), remotes:WaitForChild("Aim")
+local feedback = remotes:WaitForChild("Feedback")
 
-local ACCENTS = { Color3.fromRGB(255, 140, 60), Color3.fromRGB(110, 210, 255), Color3.fromRGB(90, 150, 255) }
-local SIZE, GAP = 104, 26
-local TEXT = Color3.fromRGB(235, 242, 255)
-local DIM = Color3.fromRGB(150, 160, 190)
+-- Slot art: the illustrated circle (dark disc, white ring, glowing teal stars). Text and cooldown sit
+-- inside the white ring. Until the image is uploaded (id still "IMG_SLOT") a drawn stand-in is used.
+local SLOT_ART = "rbxassetid://120061624337123"
+local GLOW_ART = "rbxassetid://106049974797783" -- soft teal glow (also used by the spell screen)
+local HAS_ART = not string.find(SLOT_ART, "IMG_", 1, true)
+local INNER = 0.75 -- the dark disc inside the art's white ring, as a fraction of the slot
+local SIZE, GAP = 118, 18
+local TEAL = Color3.fromRGB(90, 255, 225)
+local TEXT = Color3.fromRGB(241, 241, 241)
+local DIM = Color3.fromRGB(150, 175, 170)
 local BAD = Color3.fromRGB(255, 110, 110)
+local ART_COOL = Color3.fromRGB(150, 160, 158) -- art tint while a spell recharges
+local NAME_FONT = Font.new("rbxasset://fonts/families/Merriweather.json", Enum.FontWeight.Bold)
 
 local function new(class, props, children)
 	local inst = Instance.new(class)
@@ -33,7 +41,7 @@ end
 local gui = new("ScreenGui", { Name = "VoiceArenaHUD", ResetOnSpawn = false, ZIndexBehavior = Enum.ZIndexBehavior.Sibling,
 	Parent = player:WaitForChild("PlayerGui") })
 local width = SIZE * 3 + GAP * 2
-local holder = new("Frame", { Name = "SpellBar", Size = UDim2.fromOffset(width + 40, SIZE + 74), AnchorPoint = Vector2.new(0.5, 1),
+local holder = new("Frame", { Name = "SpellBar", Size = UDim2.fromOffset(width + 40, SIZE + 64), AnchorPoint = Vector2.new(0.5, 1),
 	Position = UDim2.new(0.5, 0, 1, -14), BackgroundTransparency = 1, Parent = gui })
 local hudScale = new("UIScale", { Parent = holder })
 
@@ -50,46 +58,58 @@ local message = new("TextLabel", { Size = UDim2.new(1, 0, 0, 18), Position = UDi
 local slots = {}
 local names = { "Flame", "Freeze", "Wave" } -- updated when the player equips a loadout
 
-local function makeSlot(i)
-	local accent = ACCENTS[i]
-	local x = 20 + (i - 1) * (SIZE + GAP)
-	local frame = new("Frame", { Name = "Spell" .. i, Size = UDim2.fromOffset(SIZE, SIZE), Position = UDim2.fromOffset(x, 48),
-		BackgroundColor3 = Color3.new(1, 1, 1), BackgroundTransparency = 0, Parent = holder }, {
-		round(),
-		new("UIGradient", { Rotation = 90, Color = ColorSequence.new({
-			ColorSequenceKeypoint.new(0, accent:Lerp(Color3.new(1, 1, 1), 0.15)),
-			ColorSequenceKeypoint.new(0.55, accent:Lerp(Color3.new(0, 0, 0), 0.35)),
-			ColorSequenceKeypoint.new(1, accent:Lerp(Color3.new(0, 0, 0), 0.7)),
-		}) }),
-	})
-	local punch = new("UIScale", { Parent = frame })
-	local ring = new("UIStroke", { Color = accent:Lerp(Color3.new(1, 1, 1), 0.45), Thickness = 3, ApplyStrokeMode = Enum.ApplyStrokeMode.Border, Parent = frame })
+local function center(scale)
+	return { Size = UDim2.fromScale(scale, scale), AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.5) }
+end
+local function merge(a, b) for k, v in b do a[k] = v end return a end
 
-	local nameLabel = new("TextLabel", { Size = UDim2.new(0.84, 0, 0.36, 0), AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.47),
-		BackgroundTransparency = 1, Font = Enum.Font.GothamBlack, Text = string.upper(names[i] or ""), TextColor3 = TEXT, TextScaled = true,
-		TextStrokeTransparency = 0.45, ZIndex = 4, Parent = frame }, { new("UITextSizeConstraint", { MaxTextSize = 20, MinTextSize = 8 }) })
+local function makeSlot(i)
+	local x = 20 + (i - 1) * (SIZE + GAP)
+	-- anchored at the centre so the cast "punch" and ready pulse scale evenly
+	local frame = new("Frame", { Name = "Spell" .. i, Size = UDim2.fromOffset(SIZE, SIZE), AnchorPoint = Vector2.new(0.5, 0.5),
+		Position = UDim2.fromOffset(x + SIZE / 2, 42 + SIZE / 2), BackgroundTransparency = 1, Parent = holder })
+	local punch = new("UIScale", { Parent = frame })
+	local glow = new("ImageLabel", merge(center(1.55), { Image = GLOW_ART, BackgroundTransparency = 1, ImageColor3 = TEAL,
+		ImageTransparency = 0.8, ZIndex = 1, Parent = frame }))
+	local art = new("ImageLabel", { Name = "Art", Image = HAS_ART and SLOT_ART or "", Size = UDim2.fromScale(1, 1),
+		BackgroundTransparency = 1, ZIndex = 2, Parent = frame })
+	if not HAS_ART then
+		art.BackgroundColor3 = Color3.fromRGB(10, 22, 20)
+		art.BackgroundTransparency = 0
+		round().Parent = art
+		new("UIStroke", { Color = TEAL, Thickness = 2, Transparency = 0.35, Parent = art })
+		new("Frame", merge(center(INNER + 0.05), { BackgroundTransparency = 1, ZIndex = 2, Parent = frame }),
+			{ round(), new("UIStroke", { Color = Color3.fromRGB(228, 232, 230), Thickness = 3 }) })
+	end
+
+	-- everything that changes lives inside the white ring
+	local inner = new("Frame", merge(center(INNER), { Name = "Inner", BackgroundTransparency = 1, ZIndex = 3, Parent = frame }))
+	local innerPx = SIZE * INNER
+	local nameLabel = new("TextLabel", { Size = UDim2.new(0.94, 0, 0.36, 0), AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.5),
+		BackgroundTransparency = 1, FontFace = NAME_FONT, Text = names[i] or "", TextColor3 = TEXT, TextScaled = true,
+		TextStrokeTransparency = 0.6, ZIndex = 6, Parent = inner }, { new("UITextSizeConstraint", { MaxTextSize = 24, MinTextSize = 8 }) })
 
 	-- radial cooldown overlay: two half-circle clips, each revealing a rotating half-plane
-	local overlay = new("CanvasGroup", { Size = UDim2.fromScale(1, 1), BackgroundTransparency = 1, Visible = false, ZIndex = 3,
-		Parent = frame }, { round() })
+	local overlay = new("CanvasGroup", { Size = UDim2.fromScale(1, 1), BackgroundTransparency = 1, Visible = false, ZIndex = 4,
+		GroupTransparency = 0.08, Parent = inner }, { round() })
 	local function half(position, rotPosition, childPosition)
 		local clip = new("Frame", { Size = UDim2.fromScale(0.5, 1), Position = position, BackgroundTransparency = 1,
 			ClipsDescendants = true, Parent = overlay })
-		local rot = new("Frame", { Size = UDim2.fromOffset(SIZE * 2, SIZE * 2), AnchorPoint = Vector2.new(0.5, 0.5), Position = rotPosition,
+		local rot = new("Frame", { Size = UDim2.fromOffset(innerPx * 2, innerPx * 2), AnchorPoint = Vector2.new(0.5, 0.5), Position = rotPosition,
 			BackgroundTransparency = 1, Parent = clip })
-		new("Frame", { Size = UDim2.fromScale(0.5, 1), Position = childPosition, BackgroundColor3 = Color3.fromRGB(58, 62, 74),
-			BackgroundTransparency = 0.04, BorderSizePixel = 0, Parent = rot })
+		new("Frame", { Size = UDim2.fromScale(0.5, 1), Position = childPosition, BackgroundColor3 = Color3.fromRGB(64, 72, 74),
+			BorderSizePixel = 0, Parent = rot })
 		return rot
 	end
 	local rightRot = half(UDim2.fromScale(0.5, 0), UDim2.fromScale(0, 0.5), UDim2.fromScale(0, 0))   -- 12 -> 6 o'clock
 	local leftRot = half(UDim2.fromScale(0, 0), UDim2.fromScale(1, 0.5), UDim2.fromScale(0.5, 0))   -- 6 -> 12 o'clock
 
 	local timer = new("TextLabel", { Size = UDim2.fromScale(1, 0.42), AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.42),
-		BackgroundTransparency = 1, Font = Enum.Font.GothamBlack, TextSize = 32, TextColor3 = Color3.new(1, 1, 1), Text = "",
-		TextStrokeTransparency = 0.35, Visible = false, ZIndex = 5, Parent = frame })
+		BackgroundTransparency = 1, FontFace = NAME_FONT, TextSize = 28, TextColor3 = Color3.new(1, 1, 1), Text = "",
+		TextStrokeTransparency = 0.35, Visible = false, ZIndex = 7, Parent = inner })
 
-	local slot = { frame = frame, punch = punch, ring = ring, name = nameLabel, overlay = overlay,
-		rightRot = rightRot, leftRot = leftRot, timer = timer, accent = accent, readyAt = 0, total = 1, cooling = false }
+	local slot = { frame = frame, punch = punch, art = art, glow = glow, name = nameLabel, overlay = overlay,
+		rightRot = rightRot, leftRot = leftRot, timer = timer, accent = TEAL, readyAt = 0, total = 1, cooling = false }
 	slots[i] = slot
 	return slot
 end
@@ -101,19 +121,20 @@ local function setCooling(slot, cooling)
 	slot.overlay.Visible = cooling
 	slot.timer.Visible = cooling
 	if cooling then
-		tween(slot.name, 0.15, { Position = UDim2.fromScale(0.5, 0.72), Size = UDim2.new(0.7, 0, 0.2, 0), TextColor3 = Color3.fromRGB(200, 205, 220) })
-		tween(slot.ring, 0.15, { Color = Color3.fromRGB(110, 116, 132), Thickness = 2 })
+		tween(slot.name, 0.15, { Position = UDim2.fromScale(0.5, 0.75), Size = UDim2.new(0.72, 0, 0.2, 0), TextColor3 = Color3.fromRGB(205, 212, 210) })
+		tween(slot.art, 0.15, { ImageColor3 = ART_COOL })
+		tween(slot.glow, 0.15, { ImageTransparency = 1 })
 	else
-		-- ready again: restore and pulse
-		tween(slot.name, 0.2, { Position = UDim2.fromScale(0.5, 0.47), Size = UDim2.new(0.84, 0, 0.36, 0), TextColor3 = TEXT })
-		slot.ring.Color = Color3.new(1, 1, 1)
-		slot.ring.Thickness = 7
-		tween(slot.ring, 0.45, { Color = slot.accent:Lerp(Color3.new(1, 1, 1), 0.45), Thickness = 3 })
+		-- ready again: restore, flash the glow and pulse a ring outward
+		tween(slot.name, 0.2, { Position = UDim2.fromScale(0.5, 0.5), Size = UDim2.new(0.94, 0, 0.36, 0), TextColor3 = TEXT })
+		slot.art.ImageColor3 = Color3.new(1, 1, 1)
+		slot.glow.ImageTransparency = 0.05
+		tween(slot.glow, 0.6, { ImageTransparency = 0.8 })
 		slot.punch.Scale = 1.12
 		tween(slot.punch, 0.35, { Scale = 1 }, Enum.EasingStyle.Back)
-		local pulse = new("Frame", { Size = UDim2.fromScale(1, 1), AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.5),
-			BackgroundTransparency = 1, ZIndex = 1, Parent = slot.frame }, { round(), new("UIStroke", { Color = slot.accent, Thickness = 3 }) })
-		tween(pulse, 0.5, { Size = UDim2.fromScale(1.5, 1.5) })
+		local pulse = new("Frame", merge(center(INNER + 0.05), { BackgroundTransparency = 1, ZIndex = 1, Parent = slot.frame }),
+			{ round(), new("UIStroke", { Color = TEAL, Thickness = 3 }) })
+		tween(pulse, 0.5, { Size = UDim2.fromScale(1.45, 1.45) })
 		tween(pulse:FindFirstChildOfClass("UIStroke"), 0.5, { Transparency = 1 })
 		task.delay(0.55, function() pulse:Destroy() end)
 	end
@@ -122,7 +143,7 @@ end
 local function setNames(list)
 	names = list
 	for i, slot in ipairs(slots) do
-		slot.name.Text = string.upper(list[i] or "")
+		slot.name.Text = list[i] or ""
 		slot.readyAt = 0
 		setCooling(slot, false)
 	end
@@ -170,8 +191,8 @@ feedback.OnClientEvent:Connect(function(event)
 		else
 			say(tostring(event.value), BAD)
 			if slot then
-				slot.ring.Color = BAD
-				tween(slot.ring, 0.4, { Color = slot.cooling and Color3.fromRGB(110, 116, 132) or slot.accent:Lerp(Color3.new(1, 1, 1), 0.45) })
+				slot.art.ImageColor3 = BAD
+				tween(slot.art, 0.4, { ImageColor3 = slot.cooling and ART_COOL or Color3.new(1, 1, 1) })
 				local base = slot.frame.Position
 				for _, dx in ipairs({ -5, 5, -3, 3, 0 }) do
 					slot.frame.Position = base + UDim2.fromOffset(dx, 0)
@@ -188,7 +209,6 @@ feedback.OnClientEvent:Connect(function(event)
 	end
 end)
 
-local accumulated = 0
 RunService.RenderStepped:Connect(function(dt)
 	local camera = workspace.CurrentCamera
 	if camera then hudScale.Scale = math.clamp((camera.ViewportSize.X - 20) / (width + 40), 0.55, 1) end
@@ -205,15 +225,5 @@ RunService.RenderStepped:Connect(function(dt)
 		elseif slot.cooling then
 			setCooling(slot, false)
 		end
-	end
-	-- mouse aim (10 times a second)
-	accumulated += dt
-	if accumulated < 0.1 then return end
-	accumulated = 0
-	local character = player.Character
-	local root = character and character:FindFirstChild("HumanoidRootPart")
-	if root then
-		local direction = mouse.Hit.Position - (root.Position + Vector3.new(0, 1, 0))
-		if direction.Magnitude > 0.1 then aim:FireServer(direction.Unit) end
 	end
 end)

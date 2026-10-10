@@ -1,8 +1,8 @@
 # Ultimate death beam
 
-Run `companion/Start.cmd`, join the Studio playtest, equip your spells, and wait for the purple ULTIMATE HUD to say READY. Say **ultimate**, then sustain your voice for the five-second beam. Aim with the mouse while your character stays in place. The next ten-second charge starts when the beam finishes. Respawning also starts a fresh ten-second charge.
+Run `companion/Start.cmd`, join the Studio playtest, equip your spells and choose your ultimate word, then wait for the purple ULTIMATE HUD to say READY. Say your chosen word (default **Ultimate**), then sustain your voice for the five-second beam. Face your avatar toward the target before casting. The beam follows the avatar's facing direction while your character stays in place. The next ten-second charge starts when the beam finishes. Respawning also starts a fresh ten-second charge.
 
-The companion recognizes the exact reserved word `ultimate` with any three-spell loadout. Ultimate does not consume a loadout slot and cannot be assigned as a custom spell name. Tentative transcription never activates it. Restart the companion after updating its code.
+The game sends the player's ultimate word with each bridge poll. The companion includes it in ElevenLabs keyterms and reconnects recognition when it changes. Custom ultimate words use the same recognition rules as other spell names; the default `Ultimate` keeps exact whole-word matching. The chosen word is translated to the canonical `Ultimate` command without a slot. Ultimate does not consume a loadout slot, and `Ultimate` remains reserved as a regular spell name. Tentative transcription never activates it. Restart an already-running companion once after updating its code; future name changes update automatically.
 
 ## Roblox microphone
 
@@ -28,7 +28,7 @@ The beam damages living Humanoid models, including test dummies, and can pierce 
 
 ## Validation
 
-The companion's 13 tests cover the new exact Ultimate command, rejection of tentative text and similar words, custom loadouts, character-life routing, normal spell matching, and HTTP behavior.
+The companion's 20 tests cover custom ultimate words, canonical death-beam routing without a slot, ultimate-only rename reconnection, per-player words, ElevenLabs keyterms, exact default Ultimate matching, rejection of tentative text, custom loadouts, character-life routing, normal spell matching, HTTP delivery, and simulated microphone/WebSocket events.
 
 Controlled runtime tests in Studio verified: zero silence damage; approximately 25.9 damage at RMS 0.03 versus 75.7 damage at RMS 0.18 over equal 1.1-second intervals; zero damage through cover; stale samples reaching zero power; caster immobility; repeated-cast rejection; a five-second lifetime; movement restoration; and a fresh ten-second cooldown. Loudness values in these gameplay checks were simulated. Real human microphone sensitivity must be checked using the HUD meter.
 

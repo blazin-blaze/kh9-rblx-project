@@ -1,7 +1,8 @@
 -- StarterPlayer.StarterPlayerScripts.SpellLoadoutClient (LocalScript)
 -- "Set Your Spells" screen, drawn from the hand-illustrated design (chains, swirls, green flames).
 -- For each of 3 slots the player names the spell (the word they'll say to cast it) and either
--- picks a preset or describes a new spell for Gemini to write. Press L to reopen.
+-- picks a preset or describes a new spell for Gemini to write. Next to Begin, the player can also
+-- change the word that fires their ultimate. Press L to reopen.
 -- Art: the background + button frames are uploaded images (IMAGES below); everything that
 -- changes (names, dropdown text, prompts, status) is live text laid over the art.
 -- Server side: ServerScriptService.VoiceArena.Loadout.
@@ -40,9 +41,11 @@ local PRESETS = {
 	{ id = "Flame", label = "Flame Spell", info = "Aimed fireball. 20 damage, then burns for 5 seconds." },
 	{ id = "Freeze", label = "Freeze Spell", info = "Ice bolt that freezes the target in place for 5 seconds." },
 	{ id = "Wave", label = "Wave Spell", info = "A wall of water that sweeps forward, pushing enemies and blocking shots." },
+	{ id = "Lightning", label = "Lightning", info = "A yellow lightning cone follows you for 3 seconds. Deals 2 damage every 0.1 seconds. 6 second cooldown." },
 }
 local DEFAULTS = { { name = "Flame", preset = 1 }, { name = "Freeze", preset = 2 }, { name = "Wave", preset = 3 } }
 local HINT = "The word you'll say to cast it"
+local DEFAULT_ULTIMATE = "Ultimate"
 
 -- The art is laid out in "design pixels" (the source illustration is 2400 x 2048).
 local DW, DH = 2400, 2048
@@ -174,6 +177,27 @@ local footerStatus = text({ Text = "", TextSize = 17, TextColor3 = C.soft, TextX
 	Size = sz(640, 90), Position = at(250, 1820), ZIndex = 3, Parent = panel })
 local beginButton = ornateButton(panel, { Text = "Begin", Position = at(980, 1806), Size = sz(440, 122), Slice = 0.45, MaxText = 30,
 	TextSize = UDim2.fromScale(0.6, 0.5) })
+-- Ultimate word, right of Begin in the strip under the cards: the cards' "Activation Word" caption and
+-- name-box style on one line. Problems with it are reported in footerStatus, left of Begin.
+text({ Text = "Ultimate Word", FontFace = SERIF_BOLD, TextScaled = true, TextXAlignment = Enum.TextXAlignment.Right,
+	Size = sz(300, 64), Position = at(1470, 1836), ZIndex = 3, Parent = panel },
+	{ new("UITextSizeConstraint", { MaxTextSize = 22, MinTextSize = 8 }) })
+local ultimateBox = new("TextBox", { Name = "UltimateWord", Text = DEFAULT_ULTIMATE, PlaceholderText = "Name it", FontFace = SERIF_BOLD,
+	TextScaled = true, TextColor3 = C.ink, PlaceholderColor3 = Color3.fromRGB(110, 140, 132), BackgroundTransparency = 1,
+	ClearTextOnFocus = false, Size = sz(370, 96), Position = at(1790, 1818), ZIndex = 3, Parent = panel },
+	{ new("UITextSizeConstraint", { MaxTextSize = 40, MinTextSize = 12 }) })
+local ultimateLine = new("Frame", { Size = sz(330, 4), AnchorPoint = Vector2.new(0.5, 0), Position = at(1975, 1910), BackgroundColor3 = C.teal,
+	BackgroundTransparency = 1, BorderSizePixel = 0, ZIndex = 3, Parent = panel })
+local ULTIMATE_PREFIX = "Ultimate word: "
+local function setUltimateProblem(message)
+	if message then
+		footerStatus.Text = ULTIMATE_PREFIX .. message
+		footerStatus.TextColor3 = C.bad
+	elseif string.sub(footerStatus.Text, 1, #ULTIMATE_PREFIX) == ULTIMATE_PREFIX then
+		footerStatus.Text = ""
+	end
+end
+
 local toast = text({ Text = "", TextSize = 22, FontFace = SERIF_BOLD, Size = UDim2.new(1, 0, 0, 30),
 	Position = UDim2.new(0, 0, 0, 136), Visible = false, TextStrokeTransparency = 0.4, Parent = gui }) -- just under MatchHud's intermission text
 
@@ -238,6 +262,14 @@ local function validateName(value)
 	if #clean < 3 or #clean > 20 then return nil, "Use 3 to 20 letters" end
 	return clean
 end
+
+ultimateBox.Focused:Connect(function() tween(ultimateLine, 0.2, { BackgroundTransparency = 0.2 }) end)
+ultimateBox.FocusLost:Connect(function()
+	tween(ultimateLine, 0.2, { BackgroundTransparency = 1 })
+	local clean, err = validateName(ultimateBox.Text)
+	if clean then ultimateBox.Text = clean end
+	setUltimateProblem(err)
+end)
 
 local function definition(card)
 	local name = validateName(card.nameBox.Text) or ""
@@ -428,9 +460,11 @@ beginButton.button.Activated:Connect(function()
 		slots[i].name = card.nameBox.Text
 	end
 	if problems then footerStatus.Text = "Fix the highlighted spells first."; footerStatus.TextColor3 = C.bad; return end
+	local ultimate, ultimateErr = validateName(ultimateBox.Text)
+	if not ultimate then setUltimateProblem(ultimateErr); return end
 	footerStatus.Text = "Equipping..."
 	footerStatus.TextColor3 = C.soft
-	local ok, result = pcall(function() return SetLoadout:InvokeServer(slots) end)
+	local ok, result = pcall(function() return SetLoadout:InvokeServer(slots, ultimate) end)
 	if not ok or type(result) ~= "table" then
 		footerStatus.Text = "Couldn't reach the server. Try again."
 		footerStatus.TextColor3 = C.bad
@@ -443,11 +477,14 @@ beginButton.button.Activated:Connect(function()
 		end
 		footerStatus.Text = "Fix the highlighted spells first."
 		footerStatus.TextColor3 = C.bad
+		local errors = result.errors or {}
+		if errors.ultimate and not (errors["1"] or errors["2"] or errors["3"]) then setUltimateProblem(errors.ultimate) end
 		return
 	end
 	footerStatus.Text = ""
 	closePanel()
-	toast.Text = "Equipped: " .. table.concat(result.names, "  /  ") .. ".  Say a name to cast. Press L to change spells."
+	toast.Text = "Equipped: " .. table.concat(result.names, "  /  ") .. ".  Ultimate: " .. tostring(result.ultimate or ultimate)
+		.. ".  Say a name to cast. Press L to change spells."
 	toast.TextColor3 = C.good
 	toast.Visible = true
 	task.delay(5, function() if not open then toast.Visible = false end end)

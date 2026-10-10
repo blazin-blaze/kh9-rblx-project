@@ -9,7 +9,7 @@ local Fx = require(script.Parent.SpellFx)
 local Forge = require(script.Parent.SpellForge)
 
 local Loadout = {}
-local PRESETS = { Flame = true, Freeze = true, Wave = true }
+local PRESETS = { Flame = true, Freeze = true, Wave = true, Lightning = true }
 local DEFAULT = {
 	{ name = "Flame", kind = "preset", preset = "Flame" },
 	{ name = "Freeze", kind = "preset", preset = "Freeze" },
@@ -21,7 +21,12 @@ for _, w in ipairs({ "the", "and", "yes", "yeah", "okay", "stop", "hello", "hey"
 	COMMON[w] = true
 end
 local MAX_FORGED = 20
+-- The word that fires the ultimate until a player picks their own in the "Set Your Spells" screen.
+-- "Ultimate" is also what the voice bridge sends for any player's ultimate word, so it stays
+-- reserved as a spell name.
+local DEFAULT_ULTIMATE = "Ultimate"
 
+local ultimateWords = {}
 local loadouts, forged, forgedOrder, forging, lastForge, cooldowns, globalCooldowns = {}, {}, {}, {}, {}, {}, {}
 local feedback, getDirection, remoteFolder
 
@@ -48,15 +53,30 @@ local function tooSimilar(a, b)
 	return d == 0 or (shortest <= 6 and d <= 1) or (shortest > 6 and d <= 2)
 end
 
-function Loadout.ValidateName(raw)
-	if type(raw) ~= "string" then return nil, "Give this spell a name" end
+local function validateWord(raw, missing)
+	if type(raw) ~= "string" then return nil, missing end
 	local clean = (string.gsub(string.gsub(raw, "^%s+", ""), "%s+$", ""))
-	if clean == "" then return nil, "Give this spell a name" end
+	if clean == "" then return nil, missing end
 	if not string.match(clean, "^%a+$") then return nil, "One word, letters only" end
 	if #clean < 3 or #clean > 20 then return nil, "Use 3 to 20 letters" end
-	if string.lower(clean) == "ultimate" then return nil, "Ultimate is reserved for the death beam" end
 	if COMMON[string.lower(clean)] then return nil, "Too common a word. Pick something more unique" end
 	return clean
+end
+
+function Loadout.ValidateName(raw)
+	local clean, err = validateWord(raw, "Give this spell a name")
+	if clean and string.lower(clean) == "ultimate" then return nil, "Ultimate is reserved for the death beam" end
+	return clean, err
+end
+
+-- nil (a client from before the ultimate word existed) keeps the default.
+function Loadout.ValidateUltimateWord(raw)
+	if raw == nil then return DEFAULT_ULTIMATE end
+	return validateWord(raw, "Give your ultimate a word")
+end
+
+function Loadout.UltimateWord(player)
+	return ultimateWords[player] or DEFAULT_ULTIMATE
 end
 
 function Loadout.Get(player)
@@ -207,7 +227,8 @@ function Loadout.Init(folder, feedbackRemote, directionGetter)
 		return { ok = ok, value = value }
 	end
 
-	remoteFunction("SetLoadout").OnServerInvoke = function(player, slots)
+	-- errors are keyed by slot ("1".."3") or "ultimate".
+	remoteFunction("SetLoadout").OnServerInvoke = function(player, slots, ultimateRaw)
 		if type(slots) ~= "table" then return { ok = false, errors = { ["1"] = "Invalid loadout" } } end
 		local defs, errors = {}, {}
 		for i = 1, 3 do
@@ -227,17 +248,30 @@ function Loadout.Init(folder, feedbackRemote, directionGetter)
 				end
 			end
 		end
+		local ultimate, ultimateErr = Loadout.ValidateUltimateWord(ultimateRaw)
+		if not ultimate then
+			errors.ultimate = ultimateErr
+		else
+			for i = 1, 3 do
+				if defs[i] and tooSimilar(defs[i].name, ultimate) then
+					errors.ultimate = string.format("Too close to \"%s\". The voice system could mix them up", defs[i].name)
+					break
+				end
+			end
+		end
 		if next(errors) then return { ok = false, errors = errors } end
 		loadouts[player] = defs
+		ultimateWords[player] = ultimate
+		player:SetAttribute("UltimateWord", ultimate) -- shown by UltimateClient's HUD
 		local names = Loadout.Names(player)
-		print("[VoiceArena] " .. player.Name .. " equipped: " .. table.concat(names, ", "))
-		feedback:FireClient(player, { kind = "loadout", names = names })
-		return { ok = true, names = names }
+		print("[VoiceArena] " .. player.Name .. " equipped: " .. table.concat(names, ", ") .. "; ultimate: " .. ultimate)
+		feedback:FireClient(player, { kind = "loadout", names = names, ultimate = ultimate })
+		return { ok = true, names = names, ultimate = ultimate }
 	end
 end
 
 Players.PlayerRemoving:Connect(function(player)
-	loadouts[player], forged[player], forgedOrder[player], forging[player] = nil, nil, nil, nil
+	loadouts[player], forged[player], forgedOrder[player], forging[player], ultimateWords[player] = nil, nil, nil, nil, nil
 	lastForge[player], cooldowns[player], globalCooldowns[player] = nil, nil, nil
 end)
 

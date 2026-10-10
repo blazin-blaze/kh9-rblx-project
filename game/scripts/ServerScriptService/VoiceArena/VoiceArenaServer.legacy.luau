@@ -15,8 +15,8 @@ local function remote(name)
   local r = folder:FindFirstChild(name) or Instance.new("RemoteEvent")
   r.Name = name; r.Parent = folder; return r
 end
-local aimRemote, feedback, testRemote = remote("Aim"), remote("Feedback"), remote("StudioCast")
-local aims, lastAim, lives, voiceActive = {}, {}, {}, {}
+local feedback, testRemote = remote("Feedback"), remote("StudioCast")
+local lives, voiceActive = {}, {}
 local session = game.JobId ~= "" and game.JobId or HttpService:GenerateGUID(false)
 local bridgeUrl = Config.BridgeUrl or "http://127.0.0.1:8787"
 assert(string.match(bridgeUrl,"^http://127%.0%.0%.1:%d+$"), "VoiceArena requires a loopback console URL")
@@ -26,7 +26,7 @@ local function state(player)
     configured = bridgeUrl ~= "", studio = RunService:IsStudio() and Config.EnableStudioKeyboard })
 end
 local function characterAdded(player)
-  lives[player] = HttpService:GenerateGUID(false); aims[player] = nil; voiceActive[player] = nil
+  lives[player] = HttpService:GenerateGUID(false); voiceActive[player] = nil
   task.delay(1, function() if player.Parent then state(player) end end)
 end
 local function playerAdded(player)
@@ -36,36 +36,28 @@ end
 Players.PlayerAdded:Connect(playerAdded)
 for _, player in ipairs(Players:GetPlayers()) do playerAdded(player) end
 Players.PlayerRemoving:Connect(function(player)
-  aims[player] = nil; lastAim[player] = nil; lives[player] = nil; voiceActive[player] = nil
+  lives[player] = nil; voiceActive[player] = nil
 end)
-aimRemote.OnServerEvent:Connect(function(player, direction)
-  local now = os.clock()
-  if now - (lastAim[player] or 0) < 0.08 then return end
-  lastAim[player] = now
-  if typeof(direction) ~= "Vector3" then return end
-  for _, v in ipairs({direction.X,direction.Y,direction.Z}) do if v ~= v or math.abs(v) > 2 then return end end
-  if direction.Magnitude < 0.5 or direction.Magnitude > 1.5 then return end
-  aims[player] = { direction = direction.Unit, at = now }
-end)
-local function aimDirection(player)
+-- Every spell reads the avatar's server-observed facing; cursor and camera position cannot steer casts.
+local function facingDirection(player)
   local root = player.Character and player.Character:FindFirstChild("HumanoidRootPart")
-  if not root then return nil end
-  local aim = aims[player]
-  return aim and os.clock() - aim.at < 1 and aim.direction or root.CFrame.LookVector
+  return root and root.CFrame.LookVector or nil
 end
 -- Spell loadouts: names are the voice activation words; slots hold a preset or an AI spell.
 local Loadout = require(script.Parent.Loadout)
-Loadout.Init(folder, feedback, aimDirection)
+Loadout.Init(folder, feedback, facingDirection)
 local Ultimate = require(script.Parent.UltimateService)
-Ultimate.Init(folder, aimDirection)
+Ultimate.Init(folder, facingDirection)
 -- ref: a spoken name or slot number; slot is a fallback when the name no longer matches.
+-- The bridge sends "Ultimate" when it hears a player's own ultimate word (Loadout.UltimateWord).
 local function cast(player, ref, slot)
+  if folder:GetAttribute("MatchState") == "Victory" then return end
   if type(ref) == "string" and string.lower(ref) == "ultimate" then
     local ok, value = Ultimate.Cast(player)
     feedback:FireClient(player, { kind = "cast", spell = "Ultimate", ok = ok, value = value })
     return
   end
-  local direction = aimDirection(player)
+  local direction = facingDirection(player)
   if not direction then return end
   local def, index = Loadout.Resolve(player, ref)
   if not def and slot then def, index = Loadout.Resolve(player, slot) end
@@ -94,7 +86,8 @@ task.spawn(function()
     end
     local roster = {}
     for _, player in ipairs(Players:GetPlayers()) do
-      table.insert(roster, { userId = player.UserId, name = player.Name, life = lives[player] or "loading", spells = Loadout.Names(player) })
+      table.insert(roster, { userId = player.UserId, name = player.Name, life = lives[player] or "loading", spells = Loadout.Names(player),
+        ultimate = Loadout.UltimateWord(player) })
     end
     local ok, data = pcall(function()
       local response = HttpService:RequestAsync({
