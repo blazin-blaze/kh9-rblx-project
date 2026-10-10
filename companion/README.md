@@ -1,4 +1,4 @@
-# Voice Arena — local Studio console
+# Voice Arena — Studio voice console
 
 ## Multiplayer Team Test
 
@@ -59,7 +59,7 @@ Start.cmd --device 22 --player Player1 --rate 48000
 Demo.cmd --player Player2
 ```
 
-One running console controls one player through one microphone. Other players can still participate using Studio test keys. This kit does not coordinate separate Studio game instances on separate PCs. To voice-control both players in one shared local server with separate microphones, a second independent microphone/recognition worker would need to be added.
+One running console controls one player through one microphone. Other players can still participate using Studio test keys. Direct localhost mode does not coordinate separate computers; use TeamTest.cmd and the shared relay for multiplayer. To voice-control both players in one shared local server with separate microphones, a second independent microphone/recognition worker would need to be added.
 
 ## Spells
 
@@ -89,7 +89,7 @@ Every recognized word is displayed on its own console line, rather than as a sen
 
 Commands expire after 2.5 seconds. ACKs and server deduplication prevent duplicate delivery, and a character life ID rejects commands from a previous respawn. The transport token in `bridge/.env` matches the server-only `SpellConfig` module; it is separate from the ElevenLabs key and is already configured. The console does not read an ElevenLabs key from that file.
 
-The Studio reader exits outside Studio and only accepts a loopback URL. The key remains in the console process and is sent only to ElevenLabs for authentication. While the microphone is active, audio is streamed to ElevenLabs and consumes your account's API usage. This helper does not record audio or save transcripts to disk.
+In direct localhost mode, the Studio reader exits outside Studio and only accepts a loopback URL. In relay mode it connects to the configured HTTPS relay, including shared Team Test servers. The key remains in the console process and is sent only to ElevenLabs for authentication. While the microphone is active, audio is streamed to ElevenLabs and consumes your account's API usage. This helper does not record audio or save transcripts to disk.
 
 ## Sources and reinstalling
 
