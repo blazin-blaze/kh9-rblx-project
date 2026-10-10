@@ -122,15 +122,30 @@ class WordReceiver:
             self.logged.clear()
 
 
+DEFAULT_BRIDGE_TOKEN = "kh9-localhost-bridge-dev-token-v1"
+
 def bridge_token():
-    # Read only the local transport token, never the old browser helper's API key.
-    token_file = Path(os.environ.get("VOICE_ARENA_TOKEN_FILE") or ROOT / ".env")
+    """Load a user override, or create the public loopback-only development config."""
+    configured = os.environ.get("VOICE_ARENA_TOKEN_FILE")
+    token_file = Path(configured) if configured else ROOT / ".env"
+    if not token_file.exists():
+        if configured:
+            raise ValueError(f"Configured token file does not exist: {token_file}")
+        token_file.write_text(
+            "# Created automatically for a local Roblox Studio playtest.\n"
+            "# This token protects only the loopback connection.\n"
+            f"BRIDGE_TOKEN={DEFAULT_BRIDGE_TOKEN}\n",
+            encoding="utf-8",
+        )
+        print("Created bridge/.env for local Studio use.", flush=True)
     for line in token_file.read_text(encoding="utf-8-sig").splitlines():
         if line.startswith("BRIDGE_TOKEN="):
             token = line.partition("=")[2].strip()
-            if len(token) >= 32:
+            if len(token) >= 16:
                 return token
-    raise ValueError("Missing BRIDGE_TOKEN in bridge/.env; restore the matching Studio configuration.")
+    raise ValueError(
+        f"Missing BRIDGE_TOKEN in {token_file}. Set one there and use the same value in SpellConfig.BridgeToken."
+    )
 
 
 class ArenaStore:

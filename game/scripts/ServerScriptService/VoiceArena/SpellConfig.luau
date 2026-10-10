@@ -1,7 +1,7 @@
 -- ServerScriptService.VoiceArena.SpellConfig (ModuleScript)
 return {
   BridgeUrl = "http://127.0.0.1:8787", -- Console helper on this PC; Studio playtests only.
-  BridgeToken = "472d5c40354bb828f40425e12db348bee87ef7031087e2bcacea7306c2b0faa0", -- Must match BRIDGE_TOKEN in bridge/.env. SERVER ONLY.
+  BridgeToken = "kh9-localhost-bridge-dev-token-v1", -- Must match BRIDGE_TOKEN in bridge/.env. SERVER ONLY.
   PollInterval = 0.15, -- Pause after each spell batch; idle polls wait up to 8 seconds.
   EnableStudioKeyboard = false, -- Spells are voice-only; keyboard casting is disabled.
   GlobalCooldown = 0.35,
@@ -20,7 +20,7 @@ return {
   },
   Ultimate = {
     ChargeSeconds = 10, Duration = 5, Range = 180,
-    MinRadius = 1.5, MaxRadius = 6.5, MaxDamagePerSecond = 70,
+    MinRadius = 0.4, MaxRadius = 12, MaxDamagePerSecond = 70,
     NoiseFloor = 0.008, FullPowerRms = 0.18, SampleTimeout = 0.4,
   },
 }

@@ -128,3 +128,7 @@ On another PC, copy `bridge/.env.example` to the ignored `bridge/.env` and provi
 ## Ultimate
 
 Say **ultimate** when the game HUD is ready. This reserved command works alongside any loadout. Roblox microphone RMS controls the five-second death beam; ElevenLabs recognizes the activation word. See [Ultimate setup and tuning](../docs/ultimate.md). Restart this console after updating.
+
+## First run from GitHub
+
+No .env file is needed before the first launch. Start.cmd automatically creates bridge/.env with the repository loopback-only Studio development token. Enter your ElevenLabs key only at the hidden prompt; it is never saved. If you change BRIDGE_TOKEN, use the same value in the game server-only SpellConfig.BridgeToken.

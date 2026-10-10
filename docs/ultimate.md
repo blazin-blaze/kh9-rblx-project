@@ -17,7 +17,7 @@ ElevenLabs handles the activation word only; Roblox handles loudness. No Roblox 
 `game/scripts/ServerScriptService/VoiceArena/SpellConfig.luau` contains `Ultimate` settings:
 
 - ChargeSeconds: 10; Duration: 5.
-- Range: 180 studs; radius: 1.5 to 6.5 studs.
+- Range: 180 studs; radius: 0.4 to 12 studs (0.8 to 24 studs across). Size scales with power raised to 1.4, keeping weaker beams thin. The core, glow, muzzle, impact orb, and collision radius all follow the live size; stronger beams also emit brighter light.
 - MaxDamagePerSecond: 70, scaled by microphone power.
 - NoiseFloor: 0.008; FullPowerRms: 0.18. Adjust these for the microphone used in the demo. Full strength does not require uncomfortable screaming.
 - SampleTimeout: 0.4 seconds. Missing samples immediately reduce power to zero after this interval.

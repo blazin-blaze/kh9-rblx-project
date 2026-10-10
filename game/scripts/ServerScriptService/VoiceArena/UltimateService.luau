@@ -156,7 +156,8 @@ local function update(player,state,dt,time)
  active.damageTime=0; active.updateTime=0
  local direction=getDirection(player) or active.direction
  active.direction=direction
- local radius=Config.MinRadius+(Config.MaxRadius-Config.MinRadius)*active.power
+ -- Keep weak beams thin; grow strongly as voice power rises. Collision uses the same radius.
+ local radius=Config.MinRadius+(Config.MaxRadius-Config.MinRadius)*active.power^1.4
  local origin=root.Position+Vector3.new(0,1,0)+direction*2
  local fullCenter=origin+direction*Config.Range/2
  local overlap=OverlapParams.new()
@@ -185,7 +186,10 @@ local function update(player,state,dt,time)
  active.core.Size=Vector3.new(length,radius*0.65,radius*0.65); active.core.CFrame=cf
  active.muzzle.Size=Vector3.one*radius*2.3; active.muzzle.Position=origin
  active.tip.Size=Vector3.one*radius*2; active.tip.Position=endpoint
- active.outer.Transparency=0.6-active.power*0.35
+ active.outer.Transparency=0.78-active.power*0.6
+ active.core.Transparency=0.45-active.power*0.4
+ local light=active.muzzle:FindFirstChildOfClass("PointLight")
+ if light then light.Brightness=0.5+active.power*4; light.Range=8+active.power*32 end
  player:SetAttribute("UltimatePower",active.power)
  for _,target in candidates do
   local model,targetH,targetRoot=table.unpack(target)

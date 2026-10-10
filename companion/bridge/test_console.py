@@ -1,5 +1,8 @@
 import base64
 import json
+import os
+import tempfile
+from pathlib import Path
 import threading
 import time
 import unittest
@@ -17,6 +20,23 @@ def register(store):
 
 
 class ConsoleTests(unittest.TestCase):
+    def test_missing_default_env_is_created_for_local_studio(self):
+        import console_bridge
+        original_root = console_bridge.ROOT
+        original_override = os.environ.pop("VOICE_ARENA_TOKEN_FILE", None)
+        try:
+            with tempfile.TemporaryDirectory() as directory:
+                console_bridge.ROOT = Path(directory)
+                self.assertEqual(console_bridge.bridge_token(), console_bridge.DEFAULT_BRIDGE_TOKEN)
+                self.assertIn(
+                    f"BRIDGE_TOKEN={console_bridge.DEFAULT_BRIDGE_TOKEN}",
+                    (Path(directory) / ".env").read_text(encoding="utf-8"),
+                )
+        finally:
+            console_bridge.ROOT = original_root
+            if original_override is not None:
+                os.environ["VOICE_ARENA_TOKEN_FILE"] = original_override
+
     def test_ultimate_is_reserved_exact_command_with_any_loadout(self):
         store = ArenaStore()
         roster = [{**ROSTER[0], "spells": ["Zorblax", "Ice", "Wave"]}]
