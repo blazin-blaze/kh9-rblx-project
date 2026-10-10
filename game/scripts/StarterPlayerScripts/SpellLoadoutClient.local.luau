@@ -240,6 +240,7 @@ local function setMode(card, mode)
 	card.ai.setSelected(aiOn)
 	card.dd.setSelected(not aiOn)
 	card.aiArea.Visible = aiOn
+	card.dd.holder.Visible = not aiOn -- the AI panel expands over the dropdown while it's open
 	card.presetInfo.Visible = not aiOn
 	card.list.Visible = false
 end
@@ -323,21 +324,32 @@ local function makeCard(i)
 	-- lower area: preset description above the flames, or the AI prompt panel over them
 	card.presetInfo = text({ Text = "", TextSize = 15, TextColor3 = C.soft, TextStrokeTransparency = 0.5, Size = sz(500, 130),
 		Position = at(cx + 40, 1470), ZIndex = 3, Parent = panel })
-	card.aiArea = inset({ Size = sz(560, 262), Position = at(cx + 10, 1444), BackgroundColor3 = Color3.fromRGB(3, 12, 11),
-		BackgroundTransparency = 0.12, Visible = false, ZIndex = 4, Parent = panel })
+	-- AI panel: opens over "- OR -" and the preset dropdown (unused in AI mode) so the prompt has room
+	card.aiArea = inset({ Size = sz(560, 548), Position = at(cx + 10, 1158), BackgroundColor3 = Color3.fromRGB(3, 12, 11),
+		BackgroundTransparency = 0.04, Visible = false, ZIndex = 4, Parent = panel })
+	text({ Text = "Describe your spell", FontFace = SERIF_BOLD, TextScaled = true, TextColor3 = C.soft,
+		TextXAlignment = Enum.TextXAlignment.Left, Size = UDim2.fromScale(0.56, 0.075), Position = UDim2.fromScale(0.04, 0.02),
+		ZIndex = 5, Parent = card.aiArea }, { new("UITextSizeConstraint", { MaxTextSize = 15, MinTextSize = 8 }) })
+	local backToPresets = new("TextButton", { Text = "Use a preset", FontFace = SERIF, TextScaled = true, TextColor3 = C.teal,
+		TextXAlignment = Enum.TextXAlignment.Right, BackgroundTransparency = 1, AutoButtonColor = false,
+		Size = UDim2.fromScale(0.36, 0.07), Position = UDim2.fromScale(0.6, 0.025), ZIndex = 5, Parent = card.aiArea },
+		{ new("UITextSizeConstraint", { MaxTextSize = 13, MinTextSize = 7 }) })
+	backToPresets.MouseEnter:Connect(function() tween(backToPresets, 0.12, { TextColor3 = C.ink }) end)
+	backToPresets.MouseLeave:Connect(function() tween(backToPresets, 0.12, { TextColor3 = C.teal }) end)
+	backToPresets.Activated:Connect(function() setMode(card, "preset") end)
 	card.prompt = inset({ Class = "TextBox", Text = "", PlaceholderText = "Describe it, e.g. \"a green fireball that splits in three\"",
-		FontFace = SERIF, TextSize = 13, TextColor3 = C.ink, PlaceholderColor3 = Color3.fromRGB(110, 140, 132), TextWrapped = true,
+		FontFace = SERIF, TextSize = 16, TextColor3 = C.ink, PlaceholderColor3 = Color3.fromRGB(110, 140, 132), TextWrapped = true,
 		MultiLine = true, ClearTextOnFocus = false, TextXAlignment = Enum.TextXAlignment.Left, TextYAlignment = Enum.TextYAlignment.Top,
-		BackgroundColor3 = C.field, Size = UDim2.new(0.92, 0, 0.44, 0), Position = UDim2.fromScale(0.04, 0.04), ZIndex = 5, Parent = card.aiArea },
-		{ new("UIPadding", { PaddingLeft = UDim.new(0, 6), PaddingRight = UDim.new(0, 6), PaddingTop = UDim.new(0, 4) }) })
-	card.generate = ornateButton(card.aiArea, { Text = "Generate", Position = UDim2.fromScale(0.03, 0.51), Size = UDim2.fromScale(0.6, 0.26),
+		BackgroundColor3 = C.field, Size = UDim2.new(0.92, 0, 0.52, 0), Position = UDim2.fromScale(0.04, 0.11), ZIndex = 5, Parent = card.aiArea },
+		{ new("UIPadding", { PaddingLeft = UDim.new(0, 8), PaddingRight = UDim.new(0, 8), PaddingTop = UDim.new(0, 6) }) })
+	card.generate = ornateButton(card.aiArea, { Text = "Generate", Position = UDim2.fromScale(0.03, 0.665), Size = UDim2.fromScale(0.6, 0.14),
 		Slice = 0.22, ZIndex = 5, MaxText = 17 })
-	card.codeButton = ornateButton(card.aiArea, { Text = "Code", Position = UDim2.fromScale(0.66, 0.51), Size = UDim2.fromScale(0.31, 0.26),
+	card.codeButton = ornateButton(card.aiArea, { Text = "Code", Position = UDim2.fromScale(0.66, 0.665), Size = UDim2.fromScale(0.31, 0.14),
 		Slice = 0.22, ZIndex = 5, MaxText = 15, Visible = false })
 	card.aiStatus = text({ Text = "Gemini writes the Luau for your spell.", TextScaled = true, TextColor3 = C.soft,
 		TextXAlignment = Enum.TextXAlignment.Left, TextYAlignment = Enum.TextYAlignment.Center,
-		Size = UDim2.fromScale(0.92, 0.2), Position = UDim2.fromScale(0.04, 0.79), ZIndex = 5, Parent = card.aiArea },
-		{ new("UITextSizeConstraint", { MaxTextSize = 13, MinTextSize = 7 }) })
+		Size = UDim2.fromScale(0.92, 0.15), Position = UDim2.fromScale(0.04, 0.83), ZIndex = 5, Parent = card.aiArea },
+		{ new("UITextSizeConstraint", { MaxTextSize = 14, MinTextSize = 7 }) })
 
 	card.test = ornateButton(panel, { Text = "Try It", Position = at(cx + 175, 1708), Size = sz(230, 78), Slice = 0.2, MaxText = 17, ZIndex = 4 })
 

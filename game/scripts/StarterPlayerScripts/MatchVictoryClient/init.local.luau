@@ -41,7 +41,7 @@ local function begin()
  saved={kind=camera.CameraType,fov=camera.FieldOfView,subject=camera.CameraSubject,cframe=camera.CFrame}
  hidden={}
  for _,screen in ipairs(player.PlayerGui:GetChildren()) do
-  if screen:IsA("ScreenGui") and screen~=gui then hidden[screen]=screen.Enabled; screen.Enabled=false end
+  if screen:IsA("ScreenGui") and screen~=gui and screen.Name~="LogoTransition" then hidden[screen]=screen.Enabled; screen.Enabled=false end
  end
  Input:BindActionAtPriority("VictoryCinematicMovement",function() return Enum.ContextActionResult.Sink end,false,3000,unpack(Enum.PlayerActions:GetEnumItems()))
  active=true; gui.Enabled=true

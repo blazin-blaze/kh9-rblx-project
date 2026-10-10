@@ -12,6 +12,7 @@ local Intro = require(script.Parent.MatchIntro)
 local ReadyZone = require(script.Parent.ReadyZone)
 local Victory = require(script.Parent.MatchVictory)
 local Ultimate = require(script.Parent.UltimateService)
+local Transition = require(script.Parent.LogoTransition)
 
 -- Solo test: with this script's SoloTest attribute ticked, one ready player is enough in Studio
 -- playtests, so matches can be tried alone. A solo match runs until that player dies or resets.
@@ -146,7 +147,9 @@ local function standing(player, character)
 end
 
 -- Respawns every ready player above the ring, then waits until at most one is left. Returns the winner or nil.
-local function runMatch()
+-- `transition` (optional): the logo transition covering lobby -> intro. Fighters are respawned while the
+-- screen is dark, and the intro is started so its first shot lines up with the logo fading out.
+local function runMatch(transition)
 	set("Preparing", 0, "Preparing the arena")
 	local fighters = {} -- player -> the character they fight with; dying or respawning eliminates them
  local eliminated, recorded, templates, connections = {}, {}, {}, {}
@@ -179,6 +182,11 @@ local function runMatch()
 			player:SetAttribute("InMatch", nil)
 			if not ok then warn("[Match] Couldn't spawn " .. player.Name .. ": " .. tostring(err)) end
 		end
+	end
+	if transition then
+		local INTRO_LEAD = 0.6 -- Intro.Play starts its cameras this long after it's called
+		Transition.HoldUntil(folder, transition, workspace:GetServerTimeNow() + INTRO_LEAD)
+		Transition.WaitUntil(transition.revealAt - INTRO_LEAD)
 	end
 	Intro.Play(folder, fighters, spots, center, ready)
  for player,character in pairs(fighters) do
@@ -230,8 +238,21 @@ end
 while true do
 	waitForPlayers()
 	if intermission() then
-		local winner,eliminated,templates = runMatch()
+		-- lobby -> intro: logo transition; the arena is set up while the screen is dark
+		local transition = Transition.Begin(folder)
+		Transition.WaitUntil(transition.blackAt)
+		local winner,eliminated,templates = runMatch(transition)
   if winner then
+   -- victory podium -> lobby: be fully dark the moment the podium ends (VictoryStart + VictoryDuration)
+   folder:SetAttribute("VictoryStart", nil)
+   task.spawn(function()
+    local waited = os.clock()
+    while not folder:GetAttribute("VictoryStart") and os.clock() - waited < 15 do task.wait(0.05) end
+    local start = folder:GetAttribute("VictoryStart")
+    if not start then return end
+    Transition.WaitUntil(start + (folder:GetAttribute("VictoryDuration") or 7.5) - Transition.FadeIn)
+    if folder:GetAttribute("MatchState") == "Victory" then Transition.Begin(folder) end
+   end)
    Victory.Play(folder,winner,eliminated,templates)
   else
    Victory.Cleanup(templates)

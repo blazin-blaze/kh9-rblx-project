@@ -50,7 +50,7 @@ local function begin()
  savedCamera={kind=cam.CameraType,subject=cam.CameraSubject,fov=cam.FieldOfView}
  input:BindActionAtPriority("MatchCinematicMovement",function() return Enum.ContextActionResult.Sink end,false,3000,unpack(Enum.PlayerActions:GetEnumItems()))
  for _,screen in ipairs(player.PlayerGui:GetChildren()) do
-  if screen:IsA("ScreenGui") and screen~=gui then hidden[screen]=screen.Enabled; screen.Enabled=false end
+  if screen:IsA("ScreenGui") and screen~=gui and screen.Name~="LogoTransition" then hidden[screen]=screen.Enabled; screen.Enabled=false end
  end
  active=true; gui.Enabled=true; cam.CameraType=Enum.CameraType.Scriptable
  local t1=folder:GetAttribute("IntroShot1Duration") or 2
