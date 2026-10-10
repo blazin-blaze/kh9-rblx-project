@@ -10,6 +10,20 @@ local Fx = require(script.Parent.SpellFx)
 local Forge = {}
 local cache = {}
 local workingModel = nil
+-- Models that just hit their rate limit / were overloaded / don't exist are skipped until this time.
+local benchedUntil = {}
+local function benchFor(status, message)
+	if status == 429 then
+		local seconds = tonumber(string.match(string.lower(message or ""), "retry in ([%d%.]+)s"))
+		return math.clamp(seconds or 60, 10, 600)
+	elseif status == 503 or status == 500 or status == 504 then
+		return 30
+	elseif status == 404 then
+		return 3600
+	elseif status == 0 and string.find(message or "", "reach", 1, true) then
+		return 20
+	end
+end
 local ENDPOINT = "https://generativelanguage.googleapis.com/v1beta/models/%s:generateContent"
 local LOADSTRING_HELP = "Roblox is blocking generated code. In Explorer select ServerScriptService, then tick LoadStringEnabled in Properties."
 
@@ -208,11 +222,16 @@ end
 -- Hedged requests: start with the model that last worked; if it hasn't answered after
 -- Config.Gemini.HedgeAfter seconds (or it failed), also ask the next model. First answer wins.
 local function callGemini(contents)
-	local order = {}
-	if workingModel then table.insert(order, workingModel) end
-	for _, model in ipairs(Config.Gemini.Models) do
-		if model ~= workingModel then table.insert(order, model) end
+	-- Ready models first (the last one that worked leads), benched ones last as a final resort.
+	local order, benched = {}, {}
+	local now = os.clock()
+	local function add(model)
+		if table.find(order, model) or table.find(benched, model) then return end
+		table.insert((benchedUntil[model] or 0) > now and benched or order, model)
 	end
+	if workingModel and table.find(Config.Gemini.Models, workingModel) then add(workingModel) end
+	for _, model in ipairs(Config.Gemini.Models) do add(model) end
+	table.move(benched, 1, #benched, #order + 1, order)
 	local result, resultInfo
 	local launched, finished, nextIndex = 0, 0, 1
 	local lastErr, fatal = "Gemini didn't answer", false
@@ -231,10 +250,16 @@ local function callGemini(contents)
 					result, resultInfo = spell, info
 					if workingModel ~= model then print("[SpellForge] Using Gemini model " .. model) end
 					workingModel = model
+					benchedUntil[model] = nil
 				end
 			else
 				lastErr = info
 				warn("[SpellForge] " .. model .. ": " .. info)
+				local bench = benchFor(status, info)
+				if bench then
+					benchedUntil[model] = os.clock() + bench
+					if workingModel == model then workingModel = nil end
+				end
 				if status == 401 or status == 403 then fatal = true end -- bad key: other models won't help
 			end
 		end)

@@ -112,6 +112,8 @@ local function validDirection(direction)
 end
 
 function Loadout.CastDef(player, def, direction)
+	local phase = remoteFolder and remoteFolder:GetAttribute("MatchState")
+	if phase == "Preparing" or phase == "Intro" then return false, "The match is about to begin" end
 	if player.Character and player.Character:GetAttribute("UltimateChanneling") then
 		return false, "You are channeling your ultimate"
 	end

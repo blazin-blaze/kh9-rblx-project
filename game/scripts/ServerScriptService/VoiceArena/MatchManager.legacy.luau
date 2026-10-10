@@ -6,10 +6,18 @@
 -- Loadout.CastDef only lets fighters cast.
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local RunService = game:GetService("RunService")
 local Loadout = require(script.Parent.Loadout)
+local Intro = require(script.Parent.MatchIntro)
+local ReadyZone = require(script.Parent.ReadyZone)
 
-local MIN_READY = 2
-local INTERMISSION = 15 -- seconds
+-- Solo test: with this script's SoloTest attribute ticked, one ready player is enough in Studio
+-- playtests, so matches can be tried alone. A solo match runs until that player dies or resets.
+-- Live servers always need 2. The attribute is read live, so it can be toggled mid-playtest.
+local function minReady()
+	return (RunService:IsStudio() and script:GetAttribute("SoloTest")) and 1 or 2
+end
+local INTERMISSION = 10 -- seconds; everyone must stay in the ready square
 local RESULT_TIME = 5   -- seconds the winner is shown before the loop restarts
 local RING_RADIUS = 55  -- fighters spawn within this many studs of Workspace.Maps.RingModel's center
 local SPAWN_SPACING = 12 -- try to keep fighters at least this far apart
@@ -33,25 +41,36 @@ local function readyPlayers()
 	return list
 end
 
-local function waitForPlayers()
-	while true do
-		local count = #readyPlayers()
-		if count >= MIN_READY then return end
-		set("Waiting", 0, string.format("%d/%d players ready. Equip your spells (L) to join", count, MIN_READY))
-		task.wait(1)
-	end
+local function sessionReady()
+ local players=Players:GetPlayers()
+ local all,inside,total,equipped=ReadyZone.Status(players,Loadout.IsEquipped)
+ return all and total>=minReady(),inside,total,equipped
 end
 
--- Returns false if too few players stay ready for the whole countdown.
+local function waitForPlayers()
+ while true do
+  local all,inside,total,equipped=sessionReady()
+  if all then return end
+  local text=string.format("%d/%d players ready",inside,total)
+  if total<minReady() then text=text..string.format(" • Need %d players",minReady()) end
+  set("Waiting",0,text)
+  task.wait(0.2)
+ end
+end
+
+-- Leaving, resetting or joining outside the square cancels the countdown.
 local function intermission()
-	local endsAt = workspace:GetServerTimeNow() + INTERMISSION
-	while workspace:GetServerTimeNow() < endsAt do
-		local count = #readyPlayers()
-		if count < MIN_READY then return false end
-		set("Intermission", endsAt, string.format("%d players ready", count))
-		task.wait(0.25)
-	end
-	return #readyPlayers() >= MIN_READY
+ local endsAt=workspace:GetServerTimeNow()+INTERMISSION
+ while workspace:GetServerTimeNow()<endsAt do
+  local all,inside,total=sessionReady()
+  if not all then
+   set("Waiting",0,string.format("%d/%d players ready",inside,total))
+   return false
+  end
+  set("Intermission",endsAt,string.format("%d/%d players ready",inside,total))
+  task.wait(0.1)
+ end
+ return sessionReady()
 end
 
 -- Random ground points above the ring, one per fighter. Only match spawns use these; every other
@@ -126,6 +145,7 @@ end
 
 -- Respawns every ready player above the ring, then waits until at most one is left. Returns the winner or nil.
 local function runMatch()
+	set("Preparing", 0, "Preparing the arena")
 	local fighters = {} -- player -> the character they fight with; dying or respawning eliminates them
 	local ready = readyPlayers()
 	local spots, center = ringSpots(#ready)
@@ -147,8 +167,10 @@ local function runMatch()
 			if not ok then warn("[Match] Couldn't spawn " .. player.Name .. ": " .. tostring(err)) end
 		end
 	end
+	Intro.Play(folder, fighters, spots, center, ready)
+	local solo = next(fighters) ~= nil and next(fighters, next(fighters)) == nil
 	local startedAt = workspace:GetServerTimeNow()
-	print("[Match] Started")
+	print("[Match] Started" .. (solo and " (solo)" or ""))
 	while true do
 		local left = {}
 		for player, character in pairs(fighters) do
@@ -161,7 +183,7 @@ local function runMatch()
 			end
 		end
 		set("Match", startedAt, string.format("%d %s left", #left, #left == 1 and "player" or "players"))
-		if #left <= 1 then return left[1] end
+		if #left <= (solo and 0 or 1) then return left[1] end
 		task.wait(0.2)
 	end
 end

@@ -11,8 +11,13 @@ return {
   -- AI spells made in the loadout screen (SpellForge + SpellFx).
   Custom = { Cooldown = 4 },
   Gemini = {
-    -- Tried in order until one answers; the first that works is remembered.
-    Models = { "gemini-3.8-flash", "gemini-3-flash-preview", "gemini-flash-latest" },
+    -- Tried in order until one answers; the first that works is remembered. Each model has its own
+    -- Google quota, so the Flash-Lite backups keep spells working when the bigger models are rate-limited
+    -- (429) or overloaded (503). A model that fails that way is benched for a while (see SpellForge).
+    Models = {
+      "gemini-3.8-flash", "gemini-3.5-flash", "gemini-3-flash-preview", "gemini-3.7-flash", -- best quality
+      "gemini-3.5-flash-lite", "gemini-flash-lite-latest", "gemini-3.1-flash-lite",          -- lower-tier backups
+    },
     Thinking = "low",      -- Gemini 3 thinking level; set to nil to send no thinking config.
     MaxAttempts = 3,       -- Generate, then up to 2 repair rounds if the code fails validation.
     MinInterval = 2,       -- Seconds between generations per player.

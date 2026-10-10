@@ -31,29 +31,29 @@ local function new(class,props)
 end
 local gui=new("ScreenGui",{Name="UltimateHUD",ResetOnSpawn=false,Parent=player:WaitForChild("PlayerGui")})
 local panel=new("Frame",{Name="Ultimate",Size=UDim2.fromOffset(270,132),Position=UDim2.new(0,18,1,-224),
- AnchorPoint=Vector2.new(0,1),BackgroundColor3=Color3.fromRGB(22,15,36),BackgroundTransparency=0.1,Parent=gui})
+ AnchorPoint=Vector2.new(0,1),BackgroundColor3=Color3.fromRGB(6,26,30),BackgroundTransparency=0.1,Parent=gui})
 new("UICorner",{CornerRadius=UDim.new(0,14),Parent=panel})
-local stroke=new("UIStroke",{Color=Color3.fromRGB(170,85,255),Thickness=2,Parent=panel})
+local stroke=new("UIStroke",{Color=Color3.fromRGB(60,230,215),Thickness=2,Parent=panel})
 local scale=new("UIScale",{Parent=panel})
 local function label(name,y,height,size,color)
  return new("TextLabel",{Name=name,Position=UDim2.fromOffset(14,y),Size=UDim2.new(1,-28,0,height),
   BackgroundTransparency=1,TextXAlignment=Enum.TextXAlignment.Left,Font=Enum.Font.GothamBold,
-  TextSize=size,TextColor3=color or Color3.fromRGB(240,230,255),Text="",Parent=panel})
+  TextSize=size,TextColor3=color or Color3.fromRGB(225,255,250),Text="",Parent=panel})
 end
 label("Title",8,20,15).Text="ULTIMATE  /  DEATH BEAM"
 local stateText=label("State",30,20,14)
 local function bar(y,color)
  local bg=new("Frame",{Position=UDim2.fromOffset(14,y),Size=UDim2.new(1,-28,0,7),
-  BackgroundColor3=Color3.fromRGB(55,42,74),BorderSizePixel=0,Parent=panel})
+  BackgroundColor3=Color3.fromRGB(18,58,62),BorderSizePixel=0,Parent=panel})
  new("UICorner",{CornerRadius=UDim.new(1,0),Parent=bg})
  local fill=new("Frame",{Size=UDim2.fromScale(0,1),BackgroundColor3=color,BorderSizePixel=0,Parent=bg})
  new("UICorner",{CornerRadius=UDim.new(1,0),Parent=fill})
  return fill
 end
-local chargeBar=bar(55,Color3.fromRGB(190,100,255))
-local micText=label("Mic",68,18,11,Color3.fromRGB(190,180,215))
-local powerBar=bar(90,Color3.fromRGB(255,160,235))
-local hint=label("Hint",101,23,11,Color3.fromRGB(180,165,200))
+local chargeBar=bar(55,Color3.fromRGB(40,215,200))
+local micText=label("Mic",68,18,11,Color3.fromRGB(165,215,208))
+local powerBar=bar(90,Color3.fromRGB(150,255,240))
+local hint=label("Hint",101,23,11,Color3.fromRGB(155,205,198))
 hint.Text="Say ultimate, then sustain your voice"
 local accumulated=0
 local heardAt=0
@@ -81,7 +81,7 @@ RunService.RenderStepped:Connect(function(dt)
  if active then
   stateText.Text=string.format("FIRING  %.1fs  /  %d%% POWER",remaining,math.floor(power*100+0.5))
   chargeBar.Size=UDim2.fromScale(math.clamp(remaining/5,0,1),1)
-  hint.Text="Hold your voice; aim with your mouse"
+  hint.Text="Louder = bigger beam. Turn with WASD to sweep"
  elseif remaining>0 then
   stateText.Text=string.format("CHARGING  %.1fs",remaining)
   chargeBar.Size=UDim2.fromScale(math.clamp(1-remaining/charge,0,1),1)

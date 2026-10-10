@@ -1,4 +1,8 @@
 -- Server-authoritative ultimate; microphone RMS is sampled locally by UltimateClient.
+-- The beam fires from the caster's chest along the way the AVATAR faces (not the camera/mouse).
+-- While channeling, the caster stays rooted but can turn with WASD/thumbstick to sweep the beam.
+-- No beam parts are made here: the server publishes BeamPower/BeamRadius/BeamLength attributes on
+-- the character and every client draws the turquoise beam itself (StarterPlayerScripts.DeathBeamFX).
 local Players=game:GetService("Players")
 local RunService=game:GetService("RunService")
 local TweenService=game:GetService("TweenService")
@@ -31,12 +35,21 @@ local function visual(name,color,shape)
  p.Size=Vector3.one*0.1; p.Parent=effects
  return p
 end
+local TURN_RATE=2.4 -- radians/second the rooted caster can turn while firing
+local function flat(v)
+ v=Vector3.new(v.X,0,v.Z)
+ return v.Magnitude>1e-3 and v.Unit or nil
+end
+local function beamOrigin(root,direction)
+ return root.Position+Vector3.new(0,0.6,0)+direction*2.2
+end
 local function finish(player,state)
  if not state.active then return end
  local active=state.active
  state.active=nil
  Locks.Release(active.character,"Ultimate")
  active.character:SetAttribute("UltimateChanneling",false)
+ active.character:SetAttribute("BeamPower",0)
  for _,p in active.visuals do
   TweenService:Create(p,TweenInfo.new(0.3),{Transparency=1,Size=Vector3.one*0.1}):Play()
   Debris:AddItem(p,0.35)
@@ -106,6 +119,8 @@ function Service.Init(remoteFolder,directionGetter)
  Players.PlayerRemoving:Connect(function(player) Service.Cancel(player); states[player]=nil end)
 end
 function Service.Cast(player)
+ local phase=folder and folder:GetAttribute("MatchState")
+ if phase=="Preparing" or phase=="Intro" then return false,"The match is about to begin" end
  local state=states[player]
  if not state then return false,"Ultimate is loading" end
  if state.active then return false,"Ultimate is already firing" end
@@ -119,17 +134,14 @@ function Service.Cast(player)
  local remaining=state.readyAt-now()
  if remaining>0 then return false,string.format("Ultimate ready in %.1fs",remaining) end
  local active={character=player.Character,root=root,h=h,endsAt=now()+Config.Duration,
-  power=0,damageTime=0,updateTime=0,visuals={},direction=getDirection(player) or root.CFrame.LookVector,
+  power=0,damageTime=0,updateTime=0,visuals={},direction=flat(root.CFrame.LookVector) or Vector3.new(0,0,-1),
   inMatch=folder:GetAttribute("MatchState")=="Match"}
- active.outer=visual("UltimateDeathBeam",Color3.fromRGB(175,65,255))
- active.outer.Transparency=0.4
- active.core=visual("UltimateBeamCore",Color3.fromRGB(250,220,255))
- active.muzzle=visual("UltimateMuzzle",Color3.fromRGB(200,100,255),Enum.PartType.Ball)
- active.tip=visual("UltimateImpact",Color3.fromRGB(245,175,255),Enum.PartType.Ball)
- active.visuals={active.outer,active.core,active.muzzle,active.tip}
- local light=Instance.new("PointLight"); light.Color=active.outer.Color; light.Range=20; light.Brightness=2
- light.Parent=active.muzzle
  Locks.Acquire(active.character,"Ultimate")
+ root.CFrame=CFrame.lookAt(root.Position,root.Position+active.direction)
+ active.character:SetAttribute("BeamPower",0)
+ active.character:SetAttribute("BeamRadius",Config.MinRadius)
+ active.character:SetAttribute("BeamLength",0)
+ active.character:SetAttribute("BeamStartedAt",now())
  active.character:SetAttribute("UltimateChanneling",true)
  state.active=active
  player:SetAttribute("UltimateActive",true)
@@ -150,15 +162,25 @@ local function update(player,state,dt,time)
  local power=math.clamp((rms-Config.NoiseFloor)/(Config.FullPowerRms-Config.NoiseFloor),0,1)^0.55
  active.power+=(power-active.power)*(1-math.exp(-dt*14))
  if not fresh then active.power=0 end
+ -- Steer: the rooted avatar turns toward the movement input, and the beam follows its facing.
+ local want=flat(h.MoveDirection)
+ if want then
+  local cur=active.direction
+  local angle=math.atan2(cur:Cross(want).Y,cur:Dot(want))
+  local step=math.clamp(angle,-TURN_RATE*dt,TURN_RATE*dt)
+  if math.abs(step)>1e-4 then
+   active.direction=(CFrame.fromAxisAngle(Vector3.yAxis,step)*cur).Unit
+   root.CFrame=CFrame.lookAt(root.Position,root.Position+active.direction)
+  end
+ end
  active.damageTime+=dt; active.updateTime+=dt
  if active.updateTime<0.1 then return end
  local elapsed=math.min(active.damageTime,0.2)
  active.damageTime=0; active.updateTime=0
- local direction=getDirection(player) or active.direction
- active.direction=direction
+ local direction=active.direction
  -- Keep weak beams thin; grow strongly as voice power rises. Collision uses the same radius.
  local radius=Config.MinRadius+(Config.MaxRadius-Config.MinRadius)*active.power^1.4
- local origin=root.Position+Vector3.new(0,1,0)+direction*2
+ local origin=beamOrigin(root,direction)
  local fullCenter=origin+direction*Config.Range/2
  local overlap=OverlapParams.new()
  overlap.FilterType=Enum.RaycastFilterType.Exclude
@@ -182,14 +204,9 @@ local function update(player,state,dt,time)
  local endpoint=origin+direction*length
  local center=origin+direction*length/2
  local cf=CFrame.lookAt(center,endpoint)*CFrame.Angles(0,math.pi/2,0)
- active.outer.Size=Vector3.new(length,radius*2,radius*2); active.outer.CFrame=cf
- active.core.Size=Vector3.new(length,radius*0.65,radius*0.65); active.core.CFrame=cf
- active.muzzle.Size=Vector3.one*radius*2.3; active.muzzle.Position=origin
- active.tip.Size=Vector3.one*radius*2; active.tip.Position=endpoint
- active.outer.Transparency=0.78-active.power*0.6
- active.core.Transparency=0.45-active.power*0.4
- local light=active.muzzle:FindFirstChildOfClass("PointLight")
- if light then light.Brightness=0.5+active.power*4; light.Range=8+active.power*32 end
+ active.character:SetAttribute("BeamPower",active.power)
+ active.character:SetAttribute("BeamRadius",radius)
+ active.character:SetAttribute("BeamLength",length)
  player:SetAttribute("UltimatePower",active.power)
  for _,target in candidates do
   local model,targetH,targetRoot=table.unpack(target)
