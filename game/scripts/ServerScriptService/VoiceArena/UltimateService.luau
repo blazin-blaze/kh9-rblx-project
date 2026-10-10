@@ -36,7 +36,7 @@ local function visual(name,color,shape)
  p.Size=Vector3.one*0.1; p.Parent=effects
  return p
 end
-local TURN_RATE=2.4 -- radians/second the rooted caster can turn while firing
+local TURN_RATE=math.rad(Config.TurnSpeedDegrees or 45) -- maximum turn speed while firing
 local function flat(v)
  v=Vector3.new(v.X,0,v.Z)
  return v.Magnitude>1e-3 and v.Unit or nil
@@ -230,11 +230,11 @@ local function update(player,state,dt,time)
   local radial=(relative-direction*along).Magnitude
   local targetPlayer=Players:GetPlayerFromCharacter(model)
   local spectator=targetPlayer and folder:GetAttribute("MatchState")=="Match" and not targetPlayer:GetAttribute("InMatch")
-  if not spectator and along>=0 and along<=length and radial<=radius+1.5 and active.power>0.005 then
+  if not spectator and Deflect.CanAffect(active.character,model) and along>=0 and along<=length and radial<=radius+1.5 and active.power>0.005 then
    -- Center-line obstruction stops the beam; this extra ray prevents wider edges hitting through walls.
    local cover=workspace:Raycast(origin,relative,params)
    if not cover or cover.Distance>=relative.Magnitude-0.1 then
-    Deflect.Damage(targetH,Config.MaxDamagePerSecond*active.power*elapsed)
+    Deflect.Damage(targetH,Config.MaxDamagePerSecond*active.power*elapsed,active.character)
    end
   end
  end

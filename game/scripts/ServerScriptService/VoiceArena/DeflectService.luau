@@ -1,4 +1,5 @@
 local Players=game:GetService("Players")
+local ReplicatedStorage=game:GetService("ReplicatedStorage")
 local Config=require(script.Parent.SpellConfig)
 local Service={}
 local active={}
@@ -7,8 +8,22 @@ function Service.IsActive(character)
  local h=character and character:FindFirstChildOfClass("Humanoid")
  return state~=nil and workspace:GetServerTimeNow()<state.endsAt and character.Parent~=nil and h~=nil and h.Health>0
 end
-function Service.Damage(h,amount)
- if h and h.Parent and h.Health>0 then
+-- Player targets are vulnerable only to fighters in the active match.
+-- MatchSpawn also protects a fresh lobby respawn before MatchManager clears InMatch.
+-- NPC practice targets remain usable while waiting for a match.
+function Service.CanAffect(source,target)
+ if not target or not target.Parent then return false end
+ local targetPlayer=Players:GetPlayerFromCharacter(target)
+ if not targetPlayer then return true end
+ local folder=ReplicatedStorage:FindFirstChild("VoiceArena")
+ if not folder or folder:GetAttribute("MatchState")~="Match" then return false end
+ if targetPlayer:GetAttribute("InMatch")~=true or target:GetAttribute("MatchSpawn")~=true then return false end
+ local sourcePlayer=source and Players:GetPlayerFromCharacter(source)
+ return sourcePlayer~=nil and sourcePlayer.Parent==Players and sourcePlayer.Character==source
+  and sourcePlayer:GetAttribute("InMatch")==true and source:GetAttribute("MatchSpawn")==true
+end
+function Service.Damage(h,amount,source)
+ if h and h.Parent and h.Health>0 and Service.CanAffect(source,h.Parent) then
   h:TakeDamage(amount*(Service.IsActive(h.Parent) and .5 or 1))
  end
 end

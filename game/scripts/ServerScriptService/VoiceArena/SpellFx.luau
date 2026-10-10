@@ -188,14 +188,15 @@ local function isOpts(v) return type(v) == "table" and not handles[v] and vec(v,
 
 ---------------------------------------------------------------- status effects
 local slows = setmetatable({}, { __mode = "k" })
-local function slow(h, seconds)
+local function slow(h, seconds, source)
 	local s = slows[h]
-	if s then s.untilTime = math.max(s.untilTime, os.clock() + seconds); return end
-	s = { untilTime = os.clock() + seconds, original = h.WalkSpeed, speed = h.WalkSpeed * 0.45 }
+	if s then s.source = source; s.untilTime = math.max(s.untilTime, os.clock() + seconds); return end
+	s = { untilTime = os.clock() + seconds, original = h.WalkSpeed, speed = h.WalkSpeed * 0.45, source = source }
 	slows[h] = s
 	h.WalkSpeed = s.speed
 	task.spawn(function()
-		while h.Parent and h.Health > 0 and os.clock() < s.untilTime do task.wait(0.1) end
+		while h.Parent and h.Health > 0 and os.clock() < s.untilTime
+			and Deflect.CanAffect(s.source, h.Parent) do task.wait(0.1) end
 		if h.Parent and h.WalkSpeed == s.speed then h.WalkSpeed = s.original end
 		slows[h] = nil
 	end)
@@ -211,12 +212,12 @@ local function push(root, h, horizontal, speed, upSpeed)
 		if root.Parent and not root.Anchored then pcall(function() root:SetNetworkOwnershipAuto() end) end
 	end)
 end
-local function applyStatus(model, h, root, status, fromPos)
+local function applyStatus(model, h, root, status, fromPos, source)
 	if type(status) ~= "string" then return end
 	status = string.lower(status)
-	if status == "burn" or status == "fire" or status == "ignite" then Spells.Burn(model, 3)
-	elseif status == "freeze" or status == "frozen" or status == "stun" then Spells.Freeze(model, 2)
-	elseif status == "slow" or status == "chill" then slow(h, 3)
+	if status == "burn" or status == "fire" or status == "ignite" then Spells.Burn(model, 3, source)
+	elseif status == "freeze" or status == "frozen" or status == "stun" then Spells.Freeze(model, 2, source)
+	elseif status == "slow" or status == "chill" then slow(h, 3, source)
 	elseif status == "knockback" or status == "push" then push(root, h, root.Position - fromPos, 60, 25)
 	elseif status == "launch" or status == "lift" or status == "knockup" then push(root, h, Vector3.zero, 0, 65)
 	elseif status == "pull" then push(root, h, fromPos - root.Position, 45, 14)
@@ -345,7 +346,7 @@ function Fx.Run(player, code, direction, options)
 		overlap.FilterDescendantsInstances = { character }
 		for _, part in ipairs(workspace:GetPartBoundsInRadius(pos, radius, overlap)) do
 			local model, h, r = humanoidModel(part, character)
-			if model and not found[model] then
+			if model and not found[model] and Deflect.CanAffect(character, model) then
 				found[model] = true
 				table.insert(list, { model, h, r })
 			end
@@ -353,11 +354,11 @@ function Fx.Run(player, code, direction, options)
 		return list
 	end
 	local function hurt(model, h, r, amount, status, fromPos)
-		if dry then return end
+		if dry or not Deflect.CanAffect(character, model) then return end
 		local used = damageTaken[h] or 0
 		local allowed = math.max(0, math.min(amount or 0, LIMITS.damage - used))
-		if allowed > 0 then Deflect.Damage(h,allowed); damageTaken[h] = used + allowed end
-		applyStatus(model, h, r, status, fromPos)
+		if allowed > 0 then Deflect.Damage(h,allowed,character); damageTaken[h] = used + allowed end
+		applyStatus(model, h, r, status, fromPos, character)
 	end
 	local function damageArea(pos, radius, amount, status, skip)
 		local list = enemiesIn(pos, radius)

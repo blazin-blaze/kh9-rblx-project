@@ -137,7 +137,7 @@ RunService.RenderStepped:Connect(function()
 			if (target - st.from).Magnitude >= st.range then target = st.from + st.dir * st.range; st.parked = now end
 			local move = target - st.pos
 			if move.Magnitude > 1e-3 then
-				local hit = workspace:Spherecast(st.pos, 0.8, move, st.params)
+				local hit = workspace:Spherecast(st.pos, st.radius, move, st.params)
 				if hit then target = hit.Position; st.parked = now end
 			end
 			st.pos = target
@@ -156,6 +156,7 @@ local function startFlight(key, op, state)
 	params.FilterType = Enum.RaycastFilterType.Exclude
 	params.FilterDescendantsInstances = { FX.folder, casterPlayer and casterPlayer.Character }
 	state.from, state.dir, state.speed, state.range = op.from, op.dir, op.speed or 90, op.range or 110
+	state.radius = op.radius or 0.8
 	state.pos, state.start, state.params = op.from, os.clock(), params
 	flights[key] = state
 end
@@ -236,14 +237,16 @@ local function flameCast(op)
 		Cam.shakeAt(muzzle, 0.35, 50)
 	end
 
-	-- the fireball
+	-- The visible shell diameter matches the server collision sphere.
+	local diameter = (op.radius or 1.3) * 2
+	local visualScale = diameter / 2.3
 	local cf = FX.lookAt(op.from, op.from + dir)
-	local core = FX.part({ Shape = BALL, Size = Vector3.one * 1.3, CFrame = cf, Color = F.hot })
-	local shell = FX.part({ Shape = BALL, Size = Vector3.one * 2.3, CFrame = cf, Color = F.orange, Transparency = 0.25 })
-	local aura = FX.part({ Shape = BALL, Size = Vector3.one * 3.8, CFrame = cf, Color = F.red, Material = FORCEFIELD })
+	local core = FX.part({ Shape = BALL, Size = Vector3.one * 1.3 * visualScale, CFrame = cf, Color = F.hot })
+	local shell = FX.part({ Shape = BALL, Size = Vector3.one * diameter, CFrame = cf, Color = F.orange, Transparency = 0.25 })
+	local aura = FX.part({ Shape = BALL, Size = Vector3.one * 3.8 * visualScale, CFrame = cf, Color = F.red, Material = FORCEFIELD })
 	local att = Instance.new("Attachment"); att.Parent = core
 	local emitters = {
-		fireEmitter(att, 240, 3.4),
+		fireEmitter(att, 240, 3.4 * visualScale),
 		FX.emitter(att, { Texture = FX.TEX.core, Rate = 25, Lifetime = FX.nr(0.15, 0.25), Speed = FX.nr(0), LockedToPart = true,
 			Size = FX.nseq(0, 4.5, 1, 3), Transparency = FX.nseq(0, 0.35, 1, 1), Color = FX.cseq(F.yellow, F.orange), LightEmission = 1,
 			Rotation = FX.nr(0, 360) }),
@@ -255,7 +258,7 @@ local function flameCast(op)
 		FX.emitter(att, { Texture = FX.TEX.sparkle, Rate = 40, Lifetime = FX.nr(1, 1.6), Speed = FX.nr(1, 4), SpreadAngle = Vector2.new(180, 180),
 			Size = FX.nseq(0, 0.3, 1, 0), Color = FX.cseq(F.yellow, F.red), LightEmission = 1, Acceleration = Vector3.new(0, -4, 0), Drag = 1 }),
 	}
-	addTrail(shell, 1.1, 0.35, FX.cseq(F.yellow, F.orange, F.red))
+	addTrail(shell, diameter / 2, 0.35, FX.cseq(F.yellow, F.orange, F.red))
 	local orbs = {}
 	for i = 1, 3 do
 		local orb = FX.part({ Shape = BALL, Size = Vector3.one * 0.55, CFrame = cf, Color = F.yellow })
@@ -271,12 +274,12 @@ local function flameCast(op)
 			local c = CFrame.new(st.pos) * look
 			local pulse = 1 + math.sin(now * 32) * 0.09
 			core.CFrame, shell.CFrame = c, c
-			shell.Size = Vector3.one * 2.3 * pulse
+			shell.Size = Vector3.one * diameter * pulse
 			aura.CFrame = c * CFrame.Angles(0, 0, now * 6)
-			aura.Size = Vector3.one * 3.8 * (2 - pulse)
+			aura.Size = Vector3.one * 3.8 * visualScale * (2 - pulse)
 			for i, orb in ipairs(orbs) do
 				local ang = now * 15 + i * math.pi * 2 / 3
-				orb.CFrame = c * CFrame.new(math.cos(ang) * 1.9, math.sin(ang) * 1.9, 0)
+				orb.CFrame = c * CFrame.new(math.cos(ang) * 1.9 * visualScale, math.sin(ang) * 1.9 * visualScale, 0)
 			end
 			light.Brightness = 6 + math.noise(now * 18, 0.5) * 6
 			-- scorch a trail of flames on the floor beneath it

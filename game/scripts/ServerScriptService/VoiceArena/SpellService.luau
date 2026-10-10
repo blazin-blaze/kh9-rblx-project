@@ -42,51 +42,55 @@ local function targetFrom(hit)
 end
 local function enemy(caster, character)
   return character and character ~= caster.Character and alive(character) ~= nil
+    and Deflect.CanAffect(caster.Character, character)
 end
-local function flame(character, impactDamage, burnSeconds)
+local function flame(character, impactDamage, burnSeconds, source)
   local h, root = alive(character)
-  if not h then return end
+  if not h or not Deflect.CanAffect(source, character) then return end
   burnSeconds = burnSeconds or Config.Flame.BurnSeconds
-  if (impactDamage or Config.Flame.Damage) > 0 then Deflect.Damage(h,impactDamage or Config.Flame.Damage) end
+  if (impactDamage or Config.Flame.Damage) > 0 then Deflect.Damage(h,impactDamage or Config.Flame.Damage,source) end
   -- Recasting refreshes one burn; it never multiplies ticking tasks.
   if burns[h] then
+    burns[h].source = source
     burns[h].untilTime = math.max(burns[h].untilTime, os.clock() + burnSeconds)
     fx({ op = "burn", target = character, duration = burns[h].untilTime - os.clock() })
     return
   end
-  local state = { untilTime = os.clock() + burnSeconds }
+  local state = { untilTime = os.clock() + burnSeconds, source = source }
   fx({ op = "burn", target = character, duration = burnSeconds })
   burns[h] = state
   task.spawn(function()
     local nextTick = os.clock() + 1
     while h.Parent and h.Health > 0 and root.Parent do
       task.wait(math.max(0, nextTick - os.clock()))
-      if not h.Parent or h.Health <= 0 or not root.Parent then break end
+      if not h.Parent or h.Health <= 0 or not root.Parent or not Deflect.CanAffect(state.source, character) then break end
       -- Tick at t=1,2,3,4,5 (including the fifth second).
       if nextTick > state.untilTime + 0.02 then break end
-      Deflect.Damage(h,Config.Flame.BurnDamage)
+      Deflect.Damage(h,Config.Flame.BurnDamage,state.source)
       nextTick += 1
       if nextTick > state.untilTime + 0.02 then break end
     end
     fx({ op = "burnend", target = character }); burns[h] = nil
   end)
 end
-local function freeze(character, duration)
+local function freeze(character, duration, source)
   local h, root = alive(character)
-  if not h then return end
+  if not h or not Deflect.CanAffect(source, character) then return end
   duration = duration or Config.Freeze.Duration
   if freezes[h] then
+    freezes[h].source = source
     freezes[h].untilTime = math.max(freezes[h].untilTime, os.clock() + duration)
     fx({ op = "freeze", target = character, duration = freezes[h].untilTime - os.clock() })
     return
   end
   fx({ op = "freeze", target = character, duration = duration })
-  local state = { untilTime = os.clock() + duration }
+  local state = { untilTime = os.clock() + duration, source = source }
   freezes[h] = state
   character:SetAttribute("VoiceFrozen", true)
   Locks.Acquire(character, "Freeze")
   task.spawn(function()
-    while h.Parent and root.Parent and h.Health > 0 and os.clock() < state.untilTime do task.wait(0.05) end
+    while h.Parent and root.Parent and h.Health > 0 and os.clock() < state.untilTime
+      and Deflect.CanAffect(state.source, character) do task.wait(0.05) end
     Locks.Release(character, "Freeze")
     if character.Parent then character:SetAttribute("VoiceFrozen", false) end
     fx({ op = "thaw", target = character }); freezes[h] = nil
@@ -96,11 +100,12 @@ local function projectile(player, direction, spell)
   local _, root = alive(player.Character)
   if not root then return end
   local cfg = Config[spell]
+  local radius = spell == "Flame" and 1.3 or 0.8
   local position = root.Position + Vector3.new(0,1,0) + direction * 2
   local kind = string.lower(spell)
   fxCounter += 1
   local id = fxCounter
-  fx({ op = kind .. "_cast", id = id, from = position, dir = direction, speed = cfg.Speed, range = cfg.Range, caster = player.UserId })
+  fx({ op = kind .. "_cast", id = id, from = position, dir = direction, speed = cfg.Speed, range = cfg.Range, radius = radius, caster = player.UserId })
   -- The projectile itself is invisible on the server; solid waves still block it.
   local params = RaycastParams.new()
   params.FilterType = Enum.RaycastFilterType.Exclude
@@ -115,8 +120,8 @@ local function projectile(player, direction, spell)
       local dt = RunService.Heartbeat:Wait()
       local distance = math.min(cfg.Speed * dt, cfg.Range - traveled)
       local step = direction * distance
-      local hit = workspace:Spherecast(position, 0.8, step, params)
-      local defender,bubblePos=Deflect.Intercept(position,step,.8,owner,hit and hit.Distance)
+      local hit = workspace:Spherecast(position, radius, step, params)
+      local defender,bubblePos=Deflect.Intercept(position,step,radius,owner,hit and hit.Distance)
       if defender then
         fx({op=kind.."_impact",id=id,pos=bubblePos,hit=false})
         local sourceRoot=owner and owner:FindFirstChild("HumanoidRootPart")
@@ -128,19 +133,19 @@ local function projectile(player, direction, spell)
         position=bubblePos+direction*.1
         params.FilterDescendantsInstances={owner}
         fxCounter+=1; id=fxCounter
-        fx({op=kind.."_cast",id=id,from=position,dir=direction,speed=cfg.Speed,range=cfg.Range,caster=(Players:GetPlayerFromCharacter(owner) or player).UserId})
+        fx({op=kind.."_cast",id=id,from=position,dir=direction,speed=cfg.Speed,range=cfg.Range,radius=radius,caster=(Players:GetPlayerFromCharacter(owner) or player).UserId})
         continue
       end
       if hit then
         hitPos, hitNormal = hit.Position, hit.Normal
         local character = targetFrom(hit.Instance)
-        if character and character~=owner and alive(character) then target = character end
+        if character and character~=owner and alive(character) and Deflect.CanAffect(owner,character) then target = character end
         break
       end
       position += step; traveled += distance
     end
     fx({ op = kind .. "_impact", id = id, pos = hitPos or position, normal = hitNormal, hit = hitPos ~= nil, target = target })
-    if target then if spell == "Flame" then flame(target) else freeze(target) end end
+    if target then if spell == "Flame" then flame(target,nil,nil,owner) else freeze(target,nil,owner) end end
   end)
 end
 local function wave(player, direction)
@@ -256,7 +261,7 @@ local function lightning(player)
             if depth>=-pad and depth<=cfg.Range and point.X*point.X+point.Y*point.Y<=radius*radius then
               ray.FilterDescendantsInstances={character,effects,target}
               if not workspace:Raycast(basis.Position,hit.Position-basis.Position,ray) then
-                Deflect.Damage(h,cfg.TickDamage)
+                Deflect.Damage(h,cfg.TickDamage,character)
                 -- LightningPresetFX draws a bolt locking onto this spot.
                 fx({op="lightning_hit",id=id,target=target,pos=hit.Position})
                 break
@@ -292,7 +297,7 @@ function Service.Cast(player, spell, direction)
   return true, cfg.Cooldown
 end
 -- Status effects reused by AI-generated spells (SpellFx). Burn adds no impact damage.
-function Service.Burn(character, seconds) flame(character, 0, seconds) end
-function Service.Freeze(character, seconds) freeze(character, seconds) end
+function Service.Burn(character, seconds, source) flame(character, 0, seconds, source) end
+function Service.Freeze(character, seconds, source) freeze(character, seconds, source) end
 Players.PlayerRemoving:Connect(function(player) cooldowns[player] = nil; globalCooldowns[player] = nil end)
 return Service

@@ -6,7 +6,7 @@ return {
   EnableStudioKeyboard = false, -- Spells are voice-only; keyboard casting is disabled.
   GlobalCooldown = 0.35,
   Flame = { Cooldown = 2, Damage = 20, BurnDamage = 4, BurnSeconds = 5, Speed = 100, Range = 110 },
-  Freeze = { Cooldown = 7, Duration = 5, Speed = 90, Range = 100 },
+  Freeze = { Cooldown = 7, Duration = 10, Speed = 90, Range = 100 },
   Wave = { Cooldown = 8, Duration = 5, Speed = 20, Width = 36, Height = 12, Depth = 5, PushSpeed = 30 },
   -- HitPadding: studs added to the cone's radius for the target's body width, so targets close to the
   -- caster (where the cone is thin) or at its edge still get hit.
@@ -29,6 +29,7 @@ return {
   },
   Ultimate = {
     ChargeSeconds = 10, Duration = 5, Range = 180,
+    TurnSpeedDegrees = 45, -- Slow beam steering: a 90-degree turn takes two seconds.
     MinRadius = 0.4, MaxRadius = 12, MaxDamagePerSecond = 70,
     NoiseFloor = 0.008, FullPowerRms = 0.18, SampleTimeout = 0.4,
   },
