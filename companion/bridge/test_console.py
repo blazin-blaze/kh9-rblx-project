@@ -6,7 +6,7 @@ import unittest
 import urllib.error
 import urllib.request
 from http.server import ThreadingHTTPServer
-from console_bridge import ArenaStore, WordReceiver, audio_message, detect_spells, handler_for, stream_session, websocket_url
+from console_bridge import ArenaStore, WordReceiver, audio_message, detect_commands, detect_spells, handler_for, stream_session, websocket_url
 
 ROSTER = [{"userId": -1, "name": "Player1", "life": "life1"}]
 
@@ -17,6 +17,21 @@ def register(store):
 
 
 class ConsoleTests(unittest.TestCase):
+    def test_ultimate_is_reserved_exact_command_with_any_loadout(self):
+        store = ArenaStore()
+        roster = [{**ROSTER[0], "spells": ["Zorblax", "Ice", "Wave"]}]
+        store.poll("studio", roster)
+        store.select(store.roster()[0])
+        self.assertEqual(store.event({"message_type": "partial_transcript", "text": "ultimate!"}), [])
+        self.assertEqual(store.event({"message_type": "committed_transcript", "text": "ultimates ultimately ultimato ultimate2 _ultimate"}), [])
+        self.assertEqual(store.event({"message_type": "committed_transcript", "text": "ULTIMATE!"}), ["Ultimate"])
+        command = store.poll("studio", roster)["commands"][0]
+        self.assertEqual(command["spell"], "Ultimate")
+        self.assertNotIn("slot", command)
+        self.assertEqual(command["life"], "life1")
+        self.assertEqual(detect_commands("ultimate", ("Flame", "Freeze", "Wave")), ["Ultimate"])
+
+
     def test_individual_words_ignore_cumulative_replays_and_cast_only_confirmed_words(self):
         store = ArenaStore()
         register(store)

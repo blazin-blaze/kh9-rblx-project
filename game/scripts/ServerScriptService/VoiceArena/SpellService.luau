@@ -4,11 +4,21 @@ local RunService = game:GetService("RunService")
 local Debris = game:GetService("Debris")
 local TweenService = game:GetService("TweenService")
 local Config = require(script.Parent.SpellConfig)
+local Locks = require(script.Parent.MovementLocks)
 local Service = {}
 local freezes, burns, cooldowns, globalCooldowns = {}, {}, {}, {}
 local effects = workspace:FindFirstChild("VoiceArenaEffects") or Instance.new("Folder")
 effects.Name = "VoiceArenaEffects"
 effects.Parent = workspace
+-- Visuals for the preset spells are drawn on every client by StarterPlayerScripts.PresetSpellFX.
+-- The server keeps all gameplay (hits, damage, burn, freeze, wave push) and just announces events.
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local remoteFolder = ReplicatedStorage:FindFirstChild("VoiceArena") or Instance.new("Folder")
+remoteFolder.Name = "VoiceArena"; remoteFolder.Parent = ReplicatedStorage
+local presetFx = remoteFolder:FindFirstChild("PresetFx") or Instance.new("RemoteEvent")
+presetFx.Name = "PresetFx"; presetFx.Parent = remoteFolder
+local fxCounter = 0
+local function fx(op) presetFx:FireAllClients(op) end
 
 local function alive(character)
   if not character then return end
@@ -24,12 +34,6 @@ local function part(name, size, color, cf, solid)
   p.Parent = effects
   return p
 end
-local function burst(position, color)
-  local p = part("SpellImpact", Vector3.one, color, CFrame.new(position))
-  p.Shape = Enum.PartType.Ball
-  TweenService:Create(p, TweenInfo.new(0.35), { Size = Vector3.new(7,7,7), Transparency = 1 }):Play()
-  Debris:AddItem(p, 0.4)
-end
 local function targetFrom(hit)
   local model = hit:FindFirstAncestorOfClass("Model")
   while model and not model:FindFirstChildOfClass("Humanoid") do model = model.Parent and model.Parent:FindFirstAncestorOfClass("Model") end
@@ -44,10 +48,13 @@ local function flame(character, impactDamage, burnSeconds)
   burnSeconds = burnSeconds or Config.Flame.BurnSeconds
   if (impactDamage or Config.Flame.Damage) > 0 then h:TakeDamage(impactDamage or Config.Flame.Damage) end
   -- Recasting refreshes one burn; it never multiplies ticking tasks.
-  if burns[h] then burns[h].untilTime = math.max(burns[h].untilTime, os.clock() + burnSeconds); return end
-  local fire = Instance.new("Fire")
-  fire.Name = "VoiceBurn"; fire.Size = 6; fire.Heat = 5; fire.Parent = root
+  if burns[h] then
+    burns[h].untilTime = math.max(burns[h].untilTime, os.clock() + burnSeconds)
+    fx({ op = "burn", target = character, duration = burns[h].untilTime - os.clock() })
+    return
+  end
   local state = { untilTime = os.clock() + burnSeconds }
+  fx({ op = "burn", target = character, duration = burnSeconds })
   burns[h] = state
   task.spawn(function()
     local nextTick = os.clock() + 1
@@ -60,60 +67,62 @@ local function flame(character, impactDamage, burnSeconds)
       nextTick += 1
       if nextTick > state.untilTime + 0.02 then break end
     end
-    fire:Destroy(); burns[h] = nil
+    fx({ op = "burnend", target = character }); burns[h] = nil
   end)
 end
 local function freeze(character, duration)
   local h, root = alive(character)
   if not h then return end
   duration = duration or Config.Freeze.Duration
-  if freezes[h] then freezes[h].untilTime = math.max(freezes[h].untilTime, os.clock() + duration); return end
-  local ice = part("FrozenPrison", Vector3.new(5,7,5), Color3.fromRGB(130,220,255), root.CFrame)
-  ice.Material = Enum.Material.Ice; ice.Transparency = 0.35
-  local state = { untilTime = os.clock() + duration, anchored = root.Anchored,
-    walk = h.WalkSpeed, jumpPower = h.JumpPower, jumpHeight = h.JumpHeight, rotate = h.AutoRotate }
+  if freezes[h] then
+    freezes[h].untilTime = math.max(freezes[h].untilTime, os.clock() + duration)
+    fx({ op = "freeze", target = character, duration = freezes[h].untilTime - os.clock() })
+    return
+  end
+  fx({ op = "freeze", target = character, duration = duration })
+  local state = { untilTime = os.clock() + duration }
   freezes[h] = state
   character:SetAttribute("VoiceFrozen", true)
-  root.AssemblyLinearVelocity = Vector3.zero; root.AssemblyAngularVelocity = Vector3.zero
-  root.Anchored = true; h.WalkSpeed = 0; h.JumpPower = 0; h.JumpHeight = 0; h.AutoRotate = false
+  Locks.Acquire(character, "Freeze")
   task.spawn(function()
     while h.Parent and root.Parent and h.Health > 0 and os.clock() < state.untilTime do task.wait(0.05) end
-    if root.Parent then root.Anchored = state.anchored end
-    if h.Parent then h.WalkSpeed = state.walk; h.JumpPower = state.jumpPower; h.JumpHeight = state.jumpHeight; h.AutoRotate = state.rotate end
+    Locks.Release(character, "Freeze")
     if character.Parent then character:SetAttribute("VoiceFrozen", false) end
-    ice:Destroy(); freezes[h] = nil
+    fx({ op = "thaw", target = character }); freezes[h] = nil
   end)
 end
 local function projectile(player, direction, spell)
   local _, root = alive(player.Character)
   if not root then return end
   local cfg = Config[spell]
-  local color = spell == "Flame" and Color3.fromRGB(255,115,35) or Color3.fromRGB(135,225,255)
   local position = root.Position + Vector3.new(0,1,0) + direction * 2
-  local orb = part(spell .. "Bolt", Vector3.new(2,2,2), color, CFrame.new(position))
-  orb.Shape = Enum.PartType.Ball
-  local light = Instance.new("PointLight"); light.Color = color; light.Range = 12; light.Brightness = 3; light.Parent = orb
-  if spell == "Flame" then local f = Instance.new("Fire"); f.Size = 3; f.Heat = 0; f.Parent = orb end
+  local kind = string.lower(spell)
+  fxCounter += 1
+  local id = fxCounter
+  fx({ op = kind .. "_cast", id = id, from = position, dir = direction, speed = cfg.Speed, range = cfg.Range, caster = player.UserId })
+  -- The projectile itself is invisible on the server; solid waves still block it.
   local params = RaycastParams.new()
-  params.FilterType = Enum.RaycastFilterType.Exclude; params.FilterDescendantsInstances = {player.Character, effects}
-  -- Include solid waves as blockers while excluding cosmetic effects.
-  params.FilterDescendantsInstances = {player.Character, orb}
+  params.FilterType = Enum.RaycastFilterType.Exclude
+  params.FilterDescendantsInstances = {player.Character}
   params.RespectCanCollide = false
   local traveled = 0
   task.spawn(function()
-    while orb.Parent and traveled < cfg.Range do
+    local hitPos, hitNormal, target
+    while traveled < cfg.Range do
       local dt = RunService.Heartbeat:Wait()
       local distance = math.min(cfg.Speed * dt, cfg.Range - traveled)
       local step = direction * distance
       local hit = workspace:Spherecast(position, 0.8, step, params)
       if hit then
+        hitPos, hitNormal = hit.Position, hit.Normal
         local character = targetFrom(hit.Instance)
-        if enemy(player, character) then if spell == "Flame" then flame(character) else freeze(character) end end
-        burst(hit.Position, color); break
+        if enemy(player, character) then target = character end
+        break
       end
-      position += step; traveled += distance; orb.Position = position
+      position += step; traveled += distance
     end
-    orb:Destroy()
+    fx({ op = kind .. "_impact", id = id, pos = hitPos or position, normal = hitNormal, hit = hitPos ~= nil, target = target })
+    if target then if spell == "Flame" then flame(target) else freeze(target) end end
   end)
 end
 local function wave(player, direction)
@@ -126,9 +135,12 @@ local function wave(player, direction)
   local cfg = Config.Wave
   local position = root.Position + horizontal * 7 + Vector3.new(0,3,0)
   local size = Vector3.new(cfg.Width, cfg.Height, cfg.Depth)
+  -- Invisible solid wall (blocks projectiles); clients draw the actual wave around it.
   local wall = part("WaveWall", size, Color3.fromRGB(35,175,230), CFrame.lookAt(position, position + horizontal), true)
-  wall.Material = Enum.Material.Glass; wall.Transparency = 0.3
-  local crest = part("WaveFoam", Vector3.new(cfg.Width,1.4,cfg.Depth+1), Color3.fromRGB(210,255,255), wall.CFrame * CFrame.new(0,cfg.Height/2,0))
+  wall.Transparency = 1; wall.CastShadow = false
+  fxCounter += 1
+  local waveId = fxCounter
+  fx({ op = "wave_cast", id = waveId, from = position, dir = horizontal, speed = cfg.Speed, duration = cfg.Duration, size = size, caster = player.UserId })
   local overlap = OverlapParams.new(); overlap.FilterType = Enum.RaycastFilterType.Exclude
   overlap.FilterDescendantsInstances = {effects, player.Character}
   local started = os.clock()
@@ -144,6 +156,7 @@ local function wave(player, direction)
           if not pushed[targetRoot] then
             pushed[targetRoot] = true
             pcall(function() targetRoot:SetNetworkOwner(nil) end)
+            fx({ op = "wave_hit", pos = targetRoot.Position, dir = horizontal, target = character })
           end
           -- Move caught targets ahead of the obstacle, with an arena raycast to avoid shoving through walls.
           local localPosition = wall.CFrame:PointToObjectSpace(targetRoot.Position)
@@ -168,12 +181,12 @@ local function wave(player, direction)
       for _ = 1, steps do
         position += horizontal * cfg.Speed * dt / steps
         wall.CFrame = CFrame.lookAt(position, position + horizontal)
-        crest.CFrame = wall.CFrame * CFrame.new(0,cfg.Height/2,0)
         pushInside()
       end
       elapsed = os.clock() - started
     end
-    wall:Destroy(); crest:Destroy()
+    fx({ op = "wave_end", id = waveId, pos = position, dir = horizontal, size = size })
+    wall:Destroy()
     for targetRoot in pairs(pushed) do if targetRoot.Parent and not targetRoot.Anchored then pcall(function() targetRoot:SetNetworkOwnershipAuto() end) end end
   end)
 end

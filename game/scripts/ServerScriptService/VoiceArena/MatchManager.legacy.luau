@@ -1,0 +1,181 @@
+-- ServerScriptService.VoiceArena.MatchManager (Script)
+-- Round loop: wait until 2+ players are ready (equipped a loadout in the "Set your spells" screen),
+-- run an intermission countdown, then a last-player-standing match. Round state is published as
+-- attributes on ReplicatedStorage.VoiceArena (MatchState, MatchTime, MatchText) and drawn by
+-- StarterPlayerScripts.MatchHud. Fighters carry the player attribute InMatch; while a match runs,
+-- Loadout.CastDef only lets fighters cast.
+local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local Loadout = require(script.Parent.Loadout)
+
+local MIN_READY = 2
+local INTERMISSION = 15 -- seconds
+local RESULT_TIME = 5   -- seconds the winner is shown before the loop restarts
+local RING_RADIUS = 55  -- fighters spawn within this many studs of Workspace.Maps.RingModel's center
+local SPAWN_SPACING = 12 -- try to keep fighters at least this far apart
+
+local folder = ReplicatedStorage:FindFirstChild("VoiceArena") or Instance.new("Folder")
+folder.Name = "VoiceArena"; folder.Parent = ReplicatedStorage
+
+-- state: "Waiting" | "Intermission" | "Match" | "Result"
+-- time: server time the intermission ends at, or the match started at (workspace:GetServerTimeNow())
+local function set(state, time, text)
+	folder:SetAttribute("MatchState", state)
+	folder:SetAttribute("MatchTime", time)
+	folder:SetAttribute("MatchText", text)
+end
+
+local function readyPlayers()
+	local list = {}
+	for _, player in ipairs(Players:GetPlayers()) do
+		if Loadout.IsEquipped(player) then table.insert(list, player) end
+	end
+	return list
+end
+
+local function waitForPlayers()
+	while true do
+		local count = #readyPlayers()
+		if count >= MIN_READY then return end
+		set("Waiting", 0, string.format("%d/%d players ready. Equip your spells (L) to join", count, MIN_READY))
+		task.wait(1)
+	end
+end
+
+-- Returns false if too few players stay ready for the whole countdown.
+local function intermission()
+	local endsAt = workspace:GetServerTimeNow() + INTERMISSION
+	while workspace:GetServerTimeNow() < endsAt do
+		local count = #readyPlayers()
+		if count < MIN_READY then return false end
+		set("Intermission", endsAt, string.format("%d players ready", count))
+		task.wait(0.25)
+	end
+	return #readyPlayers() >= MIN_READY
+end
+
+-- Random ground points above the ring, one per fighter. Only match spawns use these; every other
+-- spawn (joining, being eliminated, after a match) stays at the normal SpawnLocation.
+local function ringSpots(count)
+	local maps = workspace:FindFirstChild("Maps")
+	local ring = maps and maps:FindFirstChild("RingModel")
+	if not ring then
+		warn("[Match] Workspace.Maps.RingModel is missing; fighters spawn at the SpawnLocation")
+		return nil
+	end
+	local center = ring:GetBoundingBox().Position
+	local params = RaycastParams.new()
+	params.FilterType = Enum.RaycastFilterType.Exclude
+	params.RespectCanCollide = true
+	local ignore = { ring }
+	for _, player in ipairs(Players:GetPlayers()) do
+		if player.Character then table.insert(ignore, player.Character) end
+	end
+	params.FilterDescendantsInstances = ignore
+	local spots = {}
+	for i = 1, count do
+		local fallback
+		for _ = 1, 20 do
+			local angle = math.random() * 2 * math.pi
+			local distance = RING_RADIUS * math.sqrt(math.random()) -- uniform over the circle
+			local point = center + Vector3.new(math.cos(angle) * distance, 0, math.sin(angle) * distance)
+			local hit = workspace:Raycast(point + Vector3.new(0, 60, 0), Vector3.new(0, -120, 0), params)
+			if hit then
+				fallback = fallback or hit.Position
+				local spaced = true
+				for _, other in ipairs(spots) do
+					if (other - hit.Position).Magnitude < SPAWN_SPACING then spaced = false; break end
+				end
+				if spaced then fallback = hit.Position; break end
+			end
+		end
+		spots[i] = fallback or center
+	end
+	return spots, center
+end
+
+-- Every spawn outside a match (joining, being eliminated, after a match) is put on the
+-- Workspace.Maps.SpawnLocation pad. Roblox lifts a character above whatever blocks its spawn
+-- point, including other players on the pad, which could leave players far above the map.
+local function placeAtSpawn(player, character)
+	-- Match spawns go above the ring instead. CharacterAdded can run before or after runMatch places
+	-- the character, so check both the player's InMatch and the character's MatchSpawn mark.
+	if player:GetAttribute("InMatch") or character:GetAttribute("MatchSpawn") then return end
+	local maps = workspace:FindFirstChild("Maps")
+	local spawn = maps and maps:FindFirstChild("SpawnLocation")
+	if not spawn then return end
+	if not character:WaitForChild("HumanoidRootPart", 5) or player.Character ~= character then return end
+	if character:GetAttribute("MatchSpawn") then return end
+	local spread = math.max(0, math.min(spawn.Size.X, spawn.Size.Z) / 2 - 2)
+	local at = spawn.Position + Vector3.new(math.random() * 2 - 1, 0, math.random() * 2 - 1) * spread
+		+ Vector3.new(0, spawn.Size.Y / 2 + 3, 0)
+	character:PivotTo(CFrame.new(at) * character:GetPivot().Rotation)
+end
+local function trackSpawns(player)
+	player.CharacterAdded:Connect(function(character) placeAtSpawn(player, character) end)
+	if player.Character then task.spawn(placeAtSpawn, player, player.Character) end
+end
+Players.PlayerAdded:Connect(trackSpawns)
+for _, player in ipairs(Players:GetPlayers()) do trackSpawns(player) end
+
+local function standing(player, character)
+	if not player.Parent or not character or not character.Parent or player.Character ~= character then return false end
+	local humanoid = character:FindFirstChildOfClass("Humanoid")
+	return humanoid ~= nil and humanoid.Health > 0
+end
+
+-- Respawns every ready player above the ring, then waits until at most one is left. Returns the winner or nil.
+local function runMatch()
+	local fighters = {} -- player -> the character they fight with; dying or respawning eliminates them
+	local ready = readyPlayers()
+	local spots, center = ringSpots(#ready)
+	for i, player in ipairs(ready) do
+		player:SetAttribute("InMatch", true)
+		local ok, err = pcall(player.LoadCharacter, player)
+		if ok and player.Parent then
+			fighters[player] = player.Character
+			if player.Character then player.Character:SetAttribute("MatchSpawn", true) end
+			if spots and player.Character then
+				-- Drop in just above the ground, facing the ring's center.
+				local at = spots[i] + Vector3.new(0, 4, 0)
+				local facing = Vector3.new(center.X, at.Y, center.Z)
+				if (facing - at).Magnitude < 1 then facing = at + Vector3.new(0, 0, -1) end
+				player.Character:PivotTo(CFrame.lookAt(at, facing))
+			end
+		else
+			player:SetAttribute("InMatch", nil)
+			if not ok then warn("[Match] Couldn't spawn " .. player.Name .. ": " .. tostring(err)) end
+		end
+	end
+	local startedAt = workspace:GetServerTimeNow()
+	print("[Match] Started")
+	while true do
+		local left = {}
+		for player, character in pairs(fighters) do
+			if standing(player, character) then
+				table.insert(left, player)
+			else
+				fighters[player] = nil
+				if player.Parent then player:SetAttribute("InMatch", nil) end
+				print("[Match] " .. player.Name .. " is out")
+			end
+		end
+		set("Match", startedAt, string.format("%d %s left", #left, #left == 1 and "player" or "players"))
+		if #left <= 1 then return left[1] end
+		task.wait(0.2)
+	end
+end
+
+while true do
+	waitForPlayers()
+	if intermission() then
+		local winner = runMatch()
+		for _, player in ipairs(Players:GetPlayers()) do player:SetAttribute("InMatch", nil) end
+		local text = winner and (winner.DisplayName .. " wins!") or "Nobody survived. It's a draw"
+		print("[Match] " .. text)
+		set("Result", 0, text)
+		task.wait(RESULT_TIME)
+		-- Fresh character (full health, no burn/freeze) before the next round.
+		if winner and winner.Parent then pcall(winner.LoadCharacter, winner) end
+	end
+end

@@ -23,7 +23,7 @@ end
 local MAX_FORGED = 20
 
 local loadouts, forged, forgedOrder, forging, lastForge, cooldowns, globalCooldowns = {}, {}, {}, {}, {}, {}, {}
-local feedback, getDirection
+local feedback, getDirection, remoteFolder
 
 local function normalize(s) return string.lower((string.gsub(tostring(s), "[^%a]", ""))) end
 
@@ -54,12 +54,18 @@ function Loadout.ValidateName(raw)
 	if clean == "" then return nil, "Give this spell a name" end
 	if not string.match(clean, "^%a+$") then return nil, "One word, letters only" end
 	if #clean < 3 or #clean > 20 then return nil, "Use 3 to 20 letters" end
+	if string.lower(clean) == "ultimate" then return nil, "Ultimate is reserved for the death beam" end
 	if COMMON[string.lower(clean)] then return nil, "Too common a word. Pick something more unique" end
 	return clean
 end
 
 function Loadout.Get(player)
 	return loadouts[player] or DEFAULT
+end
+
+-- True once the player has equipped a loadout (MatchManager counts them as ready).
+function Loadout.IsEquipped(player)
+	return loadouts[player] ~= nil
 end
 
 function Loadout.Names(player)
@@ -106,6 +112,13 @@ local function validDirection(direction)
 end
 
 function Loadout.CastDef(player, def, direction)
+	if player.Character and player.Character:GetAttribute("UltimateChanneling") then
+		return false, "You are channeling your ultimate"
+	end
+	-- While a match runs only its fighters can cast (MatchManager sets MatchState and InMatch).
+	if remoteFolder and remoteFolder:GetAttribute("MatchState") == "Match" and not player:GetAttribute("InMatch") then
+		return false, "A match is in progress. Wait for the next one"
+	end
 	if def.kind == "preset" then
 		return Spells.Cast(player, def.preset, direction)
 	end
@@ -154,7 +167,7 @@ local function remember(player, result, prompt)
 end
 
 function Loadout.Init(folder, feedbackRemote, directionGetter)
-	feedback, getDirection = feedbackRemote, directionGetter
+	feedback, getDirection, remoteFolder = feedbackRemote, directionGetter, folder
 	local function remoteFunction(name)
 		local r = folder:FindFirstChild(name)
 		if r and not r:IsA("RemoteFunction") then r:Destroy(); r = nil end

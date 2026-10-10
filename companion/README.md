@@ -124,3 +124,7 @@ This folder is the working companion source for `kh9-rblx-project`. Edit compani
 `Start.cmd` and `Demo.cmd` optionally load an ignored `LocalConfig.cmd`. On the current PC it sets `VOICE_ARENA_TOKEN_FILE` to the existing credential file outside the repository. That file was retained at `C:\Users\joshu\Documents\Codex\2026-10-10\x20\outputs\voice-arena\bridge\.env`; do not delete it while this configuration is in use.
 
 On another PC, copy `bridge/.env.example` to the ignored `bridge/.env` and provide the private token matching Studio's `SpellConfig.BridgeToken`. The ElevenLabs API key is still entered at the hidden console prompt and is not saved.
+
+## Ultimate
+
+Say **ultimate** when the game HUD is ready. This reserved command works alongside any loadout. Roblox microphone RMS controls the five-second death beam; ElevenLabs recognizes the activation word. See [Ultimate setup and tuning](../docs/ultimate.md). Restart this console after updating.

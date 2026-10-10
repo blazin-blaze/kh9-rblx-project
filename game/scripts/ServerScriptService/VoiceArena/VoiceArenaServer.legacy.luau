@@ -56,8 +56,15 @@ end
 -- Spell loadouts: names are the voice activation words; slots hold a preset or an AI spell.
 local Loadout = require(script.Parent.Loadout)
 Loadout.Init(folder, feedback, aimDirection)
+local Ultimate = require(script.Parent.UltimateService)
+Ultimate.Init(folder, aimDirection)
 -- ref: a spoken name or slot number; slot is a fallback when the name no longer matches.
 local function cast(player, ref, slot)
+  if type(ref) == "string" and string.lower(ref) == "ultimate" then
+    local ok, value = Ultimate.Cast(player)
+    feedback:FireClient(player, { kind = "cast", spell = "Ultimate", ok = ok, value = value })
+    return
+  end
   local direction = aimDirection(player)
   if not direction then return end
   local def, index = Loadout.Resolve(player, ref)

@@ -82,6 +82,14 @@ def detect_spells(text, names=None):
     return list(dict.fromkeys(found))
 
 
+def detect_commands(text, names=None):
+    spells = detect_spells(text, names)
+    # The reserved ultimate command must match a whole word exactly, never a fuzzy near-match.
+    if isinstance(text, str) and "ultimate" in re.findall(r"\w+", text.lower()):
+        spells.append("Ultimate")
+    return list(dict.fromkeys(spells))
+
+
 def spell_names(player):
     return tuple((player or {}).get("spells") or DEFAULT_SPELLS)
 
@@ -210,15 +218,17 @@ class ArenaStore:
             room = self.rooms[player["session"]]
             names = spell_names(player)
             emitted = []
-            for spell in detect_spells(event.get("text"), names):
+            for spell in detect_commands(event.get("text"), names):
                 now = self.clock()
                 if now - self.last_spell.get(spell, -float("inf")) < 0.75 or len(room["commands"]) >= 128:
                     continue
                 self.last_spell[spell] = now
                 # The game resolves the spoken name to the player's slot; slot is a fallback.
                 command = {"id": str(uuid.uuid4()), "userId": player["userId"], "life": player["life"],
-                           "spell": spell, "slot": names.index(spell) + 1,
+                           "spell": spell,
                            "createdAt": round(self.wall() * 1000), "mono": now}
+                if spell != "Ultimate":
+                    command["slot"] = names.index(spell) + 1
                 room["commands"].append(command)
                 emitted.append(spell)
             if emitted:
@@ -405,7 +415,7 @@ def recognize(api_key, store, stop, device=None, requested_rate=None, preference
         terms = spell_names(store.selected_player())
         sent_keyterms = use_keyterms
         try:
-            url = websocket_url(rate, terms if sent_keyterms else None)
+            url = websocket_url(rate, (*terms, "Ultimate") if sent_keyterms else None)
             with connect(url, additional_headers={"xi-api-key": api_key}, open_timeout=10,
                          close_timeout=2, ping_interval=10, ping_timeout=5, compression=None, max_queue=16) as ws:
                 first = json.loads(ws.recv(timeout=10))
