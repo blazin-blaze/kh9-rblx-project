@@ -47,17 +47,31 @@ aimRemote.OnServerEvent:Connect(function(player, direction)
   if direction.Magnitude < 0.5 or direction.Magnitude > 1.5 then return end
   aims[player] = { direction = direction.Unit, at = now }
 end)
-local function cast(player, spell)
+local function aimDirection(player)
   local root = player.Character and player.Character:FindFirstChild("HumanoidRootPart")
-  if not root then return end
+  if not root then return nil end
   local aim = aims[player]
-  local direction = aim and os.clock() - aim.at < 1 and aim.direction or root.CFrame.LookVector
-  local ok, value = Spells.Cast(player, spell, direction)
-  feedback:FireClient(player, { kind = "cast", spell = spell, ok = ok, value = value })
+  return aim and os.clock() - aim.at < 1 and aim.direction or root.CFrame.LookVector
+end
+-- Spell loadouts: names are the voice activation words; slots hold a preset or an AI spell.
+local Loadout = require(script.Parent.Loadout)
+Loadout.Init(folder, feedback, aimDirection)
+-- ref: a spoken name or slot number; slot is a fallback when the name no longer matches.
+local function cast(player, ref, slot)
+  local direction = aimDirection(player)
+  if not direction then return end
+  local def, index = Loadout.Resolve(player, ref)
+  if not def and slot then def, index = Loadout.Resolve(player, slot) end
+  if not def then
+    feedback:FireClient(player, { kind = "cast", spell = tostring(ref), ok = false, value = "No spell called " .. tostring(ref) })
+    return
+  end
+  local ok, value = Loadout.CastDef(player, def, direction)
+  feedback:FireClient(player, { kind = "cast", spell = def.name, slot = index, ok = ok, value = value })
 end
 local lastTest = {}
 testRemote.OnServerEvent:Connect(function(player, spell)
-  if not RunService:IsStudio() or not Config.EnableStudioKeyboard or type(spell) ~= "string" then return end
+  if not RunService:IsStudio() or not Config.EnableStudioKeyboard or (type(spell) ~= "string" and type(spell) ~= "number") then return end
   local now = os.clock()
   if now - (lastTest[player] or 0) < 0.1 then return end
   lastTest[player] = now; cast(player, spell)
@@ -73,7 +87,7 @@ task.spawn(function()
     end
     local roster = {}
     for _, player in ipairs(Players:GetPlayers()) do
-      table.insert(roster, { userId = player.UserId, name = player.Name, life = lives[player] or "loading" })
+      table.insert(roster, { userId = player.UserId, name = player.Name, life = lives[player] or "loading", spells = Loadout.Names(player) })
     end
     local ok, data = pcall(function()
       local response = HttpService:RequestAsync({
@@ -104,10 +118,12 @@ task.spawn(function()
             local player = type(command.userId) == "number" and Players:GetPlayerByUserId(command.userId)
             -- Both processes run on this PC. Measure command age, not the idle long-poll duration.
             local age = type(command.createdAt) == "number" and DateTime.now().UnixTimestampMillis - command.createdAt or math.huge
-            if player and lives[player] == command.life and type(command.spell) == "string" and
+            local slot = type(command.slot) == "number" and command.slot or nil
+            local spoken = type(command.spell) == "string" and command.spell or nil
+            if player and lives[player] == command.life and (spoken or slot) and
               age >= -1000 and age < 2500 then
-                print("[VoiceArena command] " .. command.spell)
-                cast(player, command.spell)
+                print("[VoiceArena command] " .. tostring(spoken or ("slot " .. tostring(slot))))
+                cast(player, spoken or slot, slot)
               end
           end
         end

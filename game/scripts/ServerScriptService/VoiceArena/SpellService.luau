@@ -38,15 +38,16 @@ end
 local function enemy(caster, character)
   return character and character ~= caster.Character and alive(character) ~= nil
 end
-local function flame(character)
+local function flame(character, impactDamage, burnSeconds)
   local h, root = alive(character)
   if not h then return end
-  h:TakeDamage(Config.Flame.Damage)
+  burnSeconds = burnSeconds or Config.Flame.BurnSeconds
+  if (impactDamage or Config.Flame.Damage) > 0 then h:TakeDamage(impactDamage or Config.Flame.Damage) end
   -- Recasting refreshes one burn; it never multiplies ticking tasks.
-  if burns[h] then burns[h].untilTime = os.clock() + Config.Flame.BurnSeconds; return end
+  if burns[h] then burns[h].untilTime = math.max(burns[h].untilTime, os.clock() + burnSeconds); return end
   local fire = Instance.new("Fire")
   fire.Name = "VoiceBurn"; fire.Size = 6; fire.Heat = 5; fire.Parent = root
-  local state = { untilTime = os.clock() + Config.Flame.BurnSeconds }
+  local state = { untilTime = os.clock() + burnSeconds }
   burns[h] = state
   task.spawn(function()
     local nextTick = os.clock() + 1
@@ -62,13 +63,14 @@ local function flame(character)
     fire:Destroy(); burns[h] = nil
   end)
 end
-local function freeze(character)
+local function freeze(character, duration)
   local h, root = alive(character)
   if not h then return end
-  if freezes[h] then freezes[h].untilTime = os.clock() + Config.Freeze.Duration; return end
+  duration = duration or Config.Freeze.Duration
+  if freezes[h] then freezes[h].untilTime = math.max(freezes[h].untilTime, os.clock() + duration); return end
   local ice = part("FrozenPrison", Vector3.new(5,7,5), Color3.fromRGB(130,220,255), root.CFrame)
   ice.Material = Enum.Material.Ice; ice.Transparency = 0.35
-  local state = { untilTime = os.clock() + Config.Freeze.Duration, anchored = root.Anchored,
+  local state = { untilTime = os.clock() + duration, anchored = root.Anchored,
     walk = h.WalkSpeed, jumpPower = h.JumpPower, jumpHeight = h.JumpHeight, rotate = h.AutoRotate }
   freezes[h] = state
   character:SetAttribute("VoiceFrozen", true)
@@ -193,5 +195,8 @@ function Service.Cast(player, spell, direction)
   if spell == "Wave" then wave(player, direction) else projectile(player, direction, spell) end
   return true, cfg.Cooldown
 end
+-- Status effects reused by AI-generated spells (SpellFx). Burn adds no impact damage.
+function Service.Burn(character, seconds) flame(character, 0, seconds) end
+function Service.Freeze(character, seconds) freeze(character, seconds) end
 Players.PlayerRemoving:Connect(function(player) cooldowns[player] = nil; globalCooldowns[player] = nil end)
 return Service

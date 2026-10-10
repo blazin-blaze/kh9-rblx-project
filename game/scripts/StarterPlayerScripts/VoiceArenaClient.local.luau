@@ -24,21 +24,28 @@ local source = label("Run Start.cmd and enter your ElevenLabs key",61,24,13)
 local spells = label("FLAME   ·   FREEZE   ·   WAVE",90,29,17)
 local message = label("Aim with your mouse. Say one spell, then pause.",127,38,12)
 local cooldowns, studio = {}, false
+local names = { "Flame", "Freeze", "Wave" } -- updated when the player equips a loadout
 feedback.OnClientEvent:Connect(function(event)
   if event.kind == "bridge" then
     studio = event.studio
     status.Text = event.connected and "Local voice console connected" or "Voice console offline — run Start.cmd"
     source.Text = event.voiceActive and "Console microphone controls your player" or "Select your player in the console"
-    if studio then message.Text = "Studio testing: F Flame · G Freeze · H Wave. Aim with mouse." end
+    if studio then message.Text = "Studio testing: F / G / H cast spells 1 / 2 / 3. L changes spells." end
   elseif event.kind == "cast" then
     if event.ok then cooldowns[event.spell] = os.clock() + event.value; message.Text = event.spell .. " cast!"
     else message.Text = tostring(event.value) end
+  elseif event.kind == "loadout" and type(event.names) == "table" then
+    names = event.names
+    cooldowns = {}
+    message.Text = "Say " .. table.concat(names, ", ") .. " to cast. Press L to change spells."
+  elseif event.kind == "note" then
+    message.Text = tostring(event.text)
   end
 end)
 UserInputService.InputBegan:Connect(function(input, handled)
   if handled or not studio or UserInputService:GetFocusedTextBox() then return end
-  local spell = ({ [Enum.KeyCode.F] = "Flame", [Enum.KeyCode.G] = "Freeze", [Enum.KeyCode.H] = "Wave" })[input.KeyCode]
-  if spell then test:FireServer(spell) end
+  local slot = ({ [Enum.KeyCode.F] = 1, [Enum.KeyCode.G] = 2, [Enum.KeyCode.H] = 3 })[input.KeyCode]
+  if slot then test:FireServer(slot) end
 end)
 local accumulated = 0
 RunService.RenderStepped:Connect(function(dt)
@@ -54,7 +61,7 @@ RunService.RenderStepped:Connect(function(dt)
     if direction.Magnitude > 0.1 then aim:FireServer(direction.Unit) end
   end
   local texts = {}
-  for _, spell in ipairs({"Flame","Freeze","Wave"}) do
+  for _, spell in ipairs(names) do
     local remaining = math.max(0,(cooldowns[spell] or 0)-os.clock())
     table.insert(texts, remaining > 0 and string.format("%s %.1fs",spell,remaining) or (spell .. " READY"))
   end

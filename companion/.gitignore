@@ -1,0 +1,5 @@
+bridge/.env
+__pycache__/
+*.log
+LocalConfig.cmd
+.venv/

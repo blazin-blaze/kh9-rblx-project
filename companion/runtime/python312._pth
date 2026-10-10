@@ -1,0 +1,6 @@
+python312.zip
+.
+..
+../bridge
+Lib/site-packages
+import site
