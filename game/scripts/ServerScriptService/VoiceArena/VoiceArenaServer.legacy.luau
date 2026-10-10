@@ -4,8 +4,11 @@ local HttpService = game:GetService("HttpService")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
 local Config = require(script.Parent.SpellConfig)
-if not RunService:IsStudio() then
-  warn("VoiceArena console bridge runs only in local Studio playtests.")
+local relayModule = script.Parent:FindFirstChild("VoiceRelayConfig")
+local RelayConfig = relayModule and require(relayModule) or { Enabled = false }
+local relayMode = RelayConfig.Enabled == true
+if not RunService:IsStudio() and not relayMode then
+  warn("VoiceArena requires the HTTPS relay for a shared Team Test session.")
   return
 end
 local Spells = require(script.Parent.SpellService)
@@ -18,12 +21,35 @@ end
 local feedback, testRemote = remote("Feedback"), remote("StudioCast")
 local lives, voiceActive = {}, {}
 local session = game.JobId ~= "" and game.JobId or HttpService:GenerateGUID(false)
-local bridgeUrl = Config.BridgeUrl or "http://127.0.0.1:8787"
-assert(string.match(bridgeUrl,"^http://127%.0%.0%.1:%d+$"), "VoiceArena requires a loopback console URL")
+local bridgeUrl = relayMode and string.gsub(RelayConfig.Url or "", "/+$", "") or (Config.BridgeUrl or "http://127.0.0.1:8787")
+local bridgeToken = not relayMode and Config.BridgeToken or nil
+if relayMode then
+  assert(string.match(bridgeUrl, "^https://[%w%.%-]+:?%d*$") and #bridgeUrl <= 250, "VoiceArena relay requires an HTTPS base URL")
+  assert(type(RelayConfig.SecretName) == "string" and #RelayConfig.SecretName > 0, "VoiceArena relay requires a Roblox Secrets store name")
+else
+  assert(string.match(bridgeUrl, "^http://127%.0%.0%.1:%d+$"), "Local voice mode requires a loopback console URL")
+end
+folder:SetAttribute("VoiceRelayEnabled", relayMode)
 local connected = false
+local pairings, resetPairings, lastPairRequest = {}, {}, {}
+if relayMode then
+  local pairingRemote = folder:FindFirstChild("GetVoicePairing") or Instance.new("RemoteFunction")
+  pairingRemote.Name = "GetVoicePairing"; pairingRemote.Parent = folder
+  pairingRemote.OnServerInvoke = function(player, reset)
+    local now = os.clock()
+    if reset == true and now - (lastPairRequest[player] or -math.huge) >= 3 then
+      lastPairRequest[player] = now
+      resetPairings[player.UserId] = true
+      pairings[player] = nil
+    end
+    local info = pairings[player] or {}
+    return { url = bridgeUrl, connected = connected, voiceActive = voiceActive[player] or false,
+      code = info.code or "", expiresIn = math.max(0, (info.expiresAt or 0) - now) }
+  end
+end
 local function state(player)
   feedback:FireClient(player, { kind = "bridge", connected = connected, voiceActive = voiceActive[player] or false,
-    configured = bridgeUrl ~= "", studio = RunService:IsStudio() and Config.EnableStudioKeyboard })
+    configured = bridgeUrl ~= "", relay = relayMode, studio = RunService:IsStudio() and Config.EnableStudioKeyboard })
 end
 local function characterAdded(player)
   lives[player] = HttpService:GenerateGUID(false); voiceActive[player] = nil
@@ -37,6 +63,7 @@ Players.PlayerAdded:Connect(playerAdded)
 for _, player in ipairs(Players:GetPlayers()) do playerAdded(player) end
 Players.PlayerRemoving:Connect(function(player)
   lives[player] = nil; voiceActive[player] = nil
+  pairings[player] = nil; lastPairRequest[player] = nil; resetPairings[player.UserId] = nil
 end)
 -- Every spell reads the avatar's server-observed facing; cursor and camera position cannot steer casts.
 local function facingDirection(player)
@@ -81,7 +108,7 @@ task.spawn(function()
   local ack, processed = {}, {}
   local failures = 0
   while true do
-    if bridgeUrl == "" or Config.BridgeToken == "" then
+    if bridgeUrl == "" or bridgeToken == "" then
       connected = false; task.wait(2); continue
     end
     local roster = {}
@@ -89,11 +116,15 @@ task.spawn(function()
       table.insert(roster, { userId = player.UserId, name = player.Name, life = lives[player] or "loading", spells = Loadout.Names(player),
         ultimate = Loadout.UltimateWord(player) })
     end
+    local resets = {}
+    for userId in pairs(resetPairings) do table.insert(resets, userId) end
     local ok, data = pcall(function()
+      local authorization = relayMode and HttpService:GetSecret(RelayConfig.SecretName):AddPrefix("Bearer ") or ("Bearer " .. bridgeToken)
       local response = HttpService:RequestAsync({
-        Url = bridgeUrl .. "/v1/poll", Method = "POST",
-        Headers = { ["content-type"] = "application/json", ["authorization"] = "Bearer " .. Config.BridgeToken },
-        Body = HttpService:JSONEncode({ session = session, players = roster, ack = ack, waitSeconds = 8 }),
+        Url = bridgeUrl .. (relayMode and "/v1/game/poll" or "/v1/poll"), Method = "POST",
+        Headers = { ["content-type"] = "application/json", ["authorization"] = authorization },
+        Body = HttpService:JSONEncode({ session = session, players = roster, ack = ack, waitSeconds = 8,
+          serverTimeMs = DateTime.now().UnixTimestampMillis, resetPairings = resets }),
         Timeout = 12,
       })
       if not response.Success then error("Bridge HTTP " .. response.StatusCode) end
@@ -103,9 +134,14 @@ task.spawn(function()
     end)
     if ok then
       local wasConnected = connected; connected = true; failures = 0; ack = {}
+      for _, userId in ipairs(resets) do resetPairings[userId] = nil end
       for _, info in ipairs(data.players) do
         if type(info) == "table" and type(info.userId) == "number" and type(info.voiceActive) == "boolean" then
           local player = Players:GetPlayerByUserId(info.userId)
+          if relayMode and player and type(info.pairCode) == "string" and #info.pairCode <= 20 then
+            local ttl = type(info.pairExpiresIn) == "number" and math.clamp(info.pairExpiresIn, 0, 300) or 0
+            pairings[player] = { code = info.pairCode, expiresAt = os.clock() + ttl }
+          end
           if player and (voiceActive[player] ~= info.voiceActive or not wasConnected) then voiceActive[player] = info.voiceActive; state(player) end
         end
       end
@@ -116,7 +152,7 @@ task.spawn(function()
           if not processed[command.id] then
             processed[command.id] = os.clock()
             local player = type(command.userId) == "number" and Players:GetPlayerByUserId(command.userId)
-            -- Both processes run on this PC. Measure command age, not the idle long-poll duration.
+            -- The relay stamps commands using this game server's poll clock; PC clocks may differ.
             local age = type(command.createdAt) == "number" and DateTime.now().UnixTimestampMillis - command.createdAt or math.huge
             local slot = type(command.slot) == "number" and command.slot or nil
             local spoken = type(command.spell) == "string" and command.spell or nil
@@ -132,9 +168,12 @@ task.spawn(function()
     else
       failures += 1
       if connected or failures == 1 then
-        warn("[VoiceArena] Bridge unavailable; verify URL, token, HTTP permission, and running service.")
+        warn(relayMode and "[VoiceArena] HTTPS relay unavailable; check HostRelay.cmd, VoiceRelayConfig, the VOICE_RELAY_SERVER_TOKEN secret, and HTTP permission." or "[VoiceArena] Bridge unavailable; verify URL, token, HTTP permission, and running service.")
         connected = false
-        for _, player in ipairs(Players:GetPlayers()) do state(player) end
+        for _, player in ipairs(Players:GetPlayers()) do
+          voiceActive[player] = false
+          state(player)
+        end
       end
     end
     task.wait(ok and Config.PollInterval or math.min(8, 2 ^ math.min(failures,3)))

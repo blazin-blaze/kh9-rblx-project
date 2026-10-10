@@ -173,9 +173,9 @@ feedback.OnClientEvent:Connect(function(event)
 	if event.kind == "bridge" then
 		dot.BackgroundColor3 = event.connected and Color3.fromRGB(110, 230, 150) or BAD
 		if event.connected then
-			status.Text = event.voiceActive and "VOICE CONNECTED  /  MIC ACTIVE" or "VOICE CONNECTED  /  PICK PLAYER IN CONSOLE"
+			status.Text = event.voiceActive and "VOICE CONNECTED  /  MIC ACTIVE" or (event.relay and "VOICE CONNECTED  /  PAIR CONSOLE" or "VOICE CONNECTED  /  PICK PLAYER IN CONSOLE")
 		else
-			status.Text = "VOICE OFFLINE  /  RUN START.CMD"
+			status.Text = event.relay and "VOICE OFFLINE  /  CHECK RELAY HOST" or "VOICE OFFLINE  /  RUN START.CMD"
 		end
 	elseif event.kind == "cast" then
 		local slot = slotFor(event)

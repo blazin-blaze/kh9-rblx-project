@@ -410,6 +410,8 @@ def stream_session(ws, sd, device, rate, store, stop, terms=None):
 
 
 def select_player(store, preference=None):
+    if hasattr(store, "ensure_selected"):
+        return store.ensure_selected(preference)
     print("Waiting for Roblox Studio. Press Play in kh9 roblox project…", flush=True)
     while True:
         roster = store.roster()
@@ -504,27 +506,41 @@ def main():
     parser.add_argument("--player", help="Studio player name or UserId; prompts when ambiguous")
     parser.add_argument("--rate", type=int, choices=[8000, 16000, 22050, 24000, 44100, 48000])
     parser.add_argument("--port", type=int, default=8787)
+    parser.add_argument("--team-test", action="store_true", help="Pair your microphone with a player through the shared HTTPS relay")
+    parser.add_argument("--relay", help="HTTPS relay base URL (implies --team-test)")
+    parser.add_argument("--pair", help="Temporary pairing code from the game's Voice Connect panel")
     args = parser.parse_args()
     if args.devices:
         import sounddevice as sd
         print(sd.query_devices())
         return
     api_key = ""
-    print("KNIGHT HACKS IX — LOCAL STUDIO VOICE CONSOLE", flush=True)
+    print("KNIGHT HACKS IX — " + ("TEAM TEST VOICE CONSOLE" if args.team_test or args.relay else "LOCAL STUDIO VOICE CONSOLE"), flush=True)
     if not args.demo:
         print("While active, microphone audio is sent to ElevenLabs Scribe Realtime.", flush=True)
         api_key = getpass.getpass("ElevenLabs API key (hidden; not saved): ").strip()
         if not api_key:
             raise ValueError("Enter an ElevenLabs Speech-to-Text API key.")
-    token = bridge_token()
-    store, stop = ArenaStore(), threading.Event()
-    try:
-        server = ThreadingHTTPServer(("127.0.0.1", args.port), handler_for(store, token))
-    except OSError:
-        raise RuntimeError(f"Port {args.port} is already in use. Stop the old helper before starting this console.") from None
-    server.daemon_threads = True
-    threading.Thread(target=server.serve_forever, daemon=True).start()
-    print(f"Studio connection: http://127.0.0.1:{server.server_port} (loopback only)", flush=True)
+    stop, server = threading.Event(), None
+    if args.team_test or args.relay:
+        from relay_client import RelayArenaStore, validate_url
+        settings = ROOT.parent / "team-relay.json"
+        saved = json.loads(settings.read_text()).get("url", "") if settings.exists() else ""
+        url = validate_url(args.relay or input(f'HTTPS relay URL [{saved}]: ').strip() or saved)
+        settings.write_text(json.dumps({"url": url}) + "\n", encoding="utf-8")
+        code = args.pair or input("Pairing code from your game's Voice Connect panel: ").strip()
+        store = RelayArenaStore(url, code, stop)
+        print(f"Shared relay: {url}", flush=True)
+    else:
+        token = bridge_token()
+        store = ArenaStore()
+        try:
+            server = ThreadingHTTPServer(("127.0.0.1", args.port), handler_for(store, token))
+        except OSError:
+            raise RuntimeError(f"Port {args.port} is already in use. Stop the old helper before starting this console.") from None
+        server.daemon_threads = True
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        print(f"Studio connection: http://127.0.0.1:{server.server_port} (loopback only)", flush=True)
     try:
         select_player(store, args.player)
         if args.demo:
@@ -551,8 +567,11 @@ def main():
         with store.condition:
             store.version += 1
             store.condition.notify_all()
-        server.shutdown()
-        server.server_close()
+        if server:
+            server.shutdown()
+            server.server_close()
+        else:
+            store.close()
 
 
 if __name__ == "__main__":

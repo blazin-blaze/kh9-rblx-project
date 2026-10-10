@@ -1,5 +1,7 @@
 # Portable runtime and dependencies
 
+- cloudflared 2026.10.0: https://github.com/cloudflare/cloudflared/releases/tag/2026.10.0 — Apache-2.0. HostRelay.cmd downloads the Windows amd64 executable when needed and verifies SHA-256 `86aee4017b26625cee8484c113558f48effa4cd47f7aa05fcf425604e5d2b23c`. Official license: https://github.com/cloudflare/cloudflared/blob/2026.10.0/LICENSE. The downloaded binary is ignored by Git.
+
 The Windows x64 Python runtime and selected libraries were copied from the user-provided VoskStudioBridge reference into this separate package. The reference folder was not modified. No Vosk recognition model is included or used here.
 
 - Python 3.12.10: https://www.python.org/ftp/python/3.12.10/python-3.12.10-embed-amd64.zip — PSF license included in runtime/LICENSE.txt.

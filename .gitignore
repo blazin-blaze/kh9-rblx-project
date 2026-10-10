@@ -1,1 +1,10 @@
 **/Secrets.luau
+**/VoiceRelayConfig.luau
+companion/bridge/relay.local.json
+companion/bridge/VoiceRelayConfig.generated.luau
+companion/bridge/host-state.json
+companion/bridge/tunnel.log
+companion/bridge/host.log
+companion/bridge/host.err.log
+companion/team-relay.json
+companion/tools/cloudflared.exe
