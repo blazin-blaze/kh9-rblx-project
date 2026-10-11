@@ -528,9 +528,10 @@ def main():
         saved = json.loads(settings.read_text()).get("url", "") if settings.exists() else ""
         url = validate_url(args.relay or input(f'HTTPS relay URL [{saved}]: ').strip() or saved)
         settings.write_text(json.dumps({"url": url}) + "\n", encoding="utf-8")
+        print(f"Shared relay: {url}", flush=True)
+        print("This console connects after pairing. If the game says RELAY OFFLINE, check the host and the Roblox relay secret's allowed Domain first.", flush=True)
         code = args.pair or input("Pairing code from your game's Voice Connect panel: ").strip()
         store = RelayArenaStore(url, code, stop)
-        print(f"Shared relay: {url}", flush=True)
     else:
         token = bridge_token()
         store = ArenaStore()

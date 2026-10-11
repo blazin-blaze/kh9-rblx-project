@@ -1,5 +1,7 @@
 # Multiplayer voice spells in Team Test
 
+For a permanent address using your Cloudflare domain, see [stable relay setup](stable-relay.md). HostRelay.cmd automatically uses the named tunnel after ConfigureStableRelay.cmd has saved its settings.
+
 The HTTPS relay lets every player use a separate ElevenLabs console and microphone while joining the same game. The existing spells, avatar-facing aim, AI generation, ultimate loudness, movement, cooldowns, and match rules are unchanged.
 
 ## Host once, connect on every computer

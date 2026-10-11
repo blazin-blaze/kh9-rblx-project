@@ -197,7 +197,9 @@ class RelayStore(ArenaStore):
 
 
 def handler_for_relay(store, server_token, stop_callback=None, stop_token=None):
+    host_instance_id = uuid.uuid4().hex
     class Handler(BaseHTTPRequestHandler):
+        instance_id = host_instance_id
         def log_message(self, *args):
             pass  # Never log codes, tokens, or request bodies.
 
@@ -215,7 +217,7 @@ def handler_for_relay(store, server_token, stop_callback=None, stop_token=None):
 
         def do_GET(self):
             if self.path == "/health":
-                return self.respond(200, {"ok": True, "mode": "relay", "protocol": 1})
+                return self.respond(200, {"ok": True, "mode": "relay", "protocol": 1, "instanceId": self.instance_id})
             self.respond(404, {"error": "No website; run TeamTest.cmd"})
 
         def do_POST(self):

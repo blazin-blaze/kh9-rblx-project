@@ -5,7 +5,9 @@ import time
 import uuid
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlsplit
-from urllib.request import HTTPRedirectHandler, Request, build_opener
+from urllib.request import Request
+
+from relay_dns import NoRedirect, relay_opener
 
 from console_bridge import detect_commands, loadout_summary, spell_names, ultimate_word
 
@@ -14,11 +16,6 @@ class RelayClientError(RuntimeError):
     def __init__(self, status, message):
         self.status = status
         super().__init__(message)
-
-
-class NoRedirect(HTTPRedirectHandler):
-    def redirect_request(self, *args, **kwargs):
-        return None
 
 
 def validate_url(url, allow_local=False):
@@ -34,7 +31,7 @@ def validate_url(url, allow_local=False):
 class RelayHTTP:
     def __init__(self, url, allow_local=False):
         self.url = validate_url(url, allow_local)
-        self.opener = build_opener(NoRedirect())
+        self.opener = relay_opener(self.url)
 
     def post(self, path, data, token=None):
         headers = {"Content-Type": "application/json"}

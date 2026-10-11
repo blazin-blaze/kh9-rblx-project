@@ -8,3 +8,5 @@ companion/bridge/host.log
 companion/bridge/host.err.log
 companion/team-relay.json
 companion/tools/cloudflared.exe
+companion/bridge/cloudflare.local.json
+companion/bridge/cloudflare-tunnel.token

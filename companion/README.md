@@ -1,5 +1,7 @@
 # Voice Arena — Studio voice console
 
+For a permanent address using your Cloudflare domain, see [stable relay setup](../docs/stable-relay.md). HostRelay.cmd automatically uses the named tunnel after ConfigureStableRelay.cmd has saved its settings.
+
 ## Multiplayer Team Test
 
 Use **HostRelay.cmd** on one PC and **TeamTest.cmd** on each player's PC. The shared HTTPS relay pairs each console with its own avatar; everyone retains their own microphone and ElevenLabs key. Open **Voice Connect** in the game to obtain your relay URL and pairing code. **TeamTestDemo.cmd** tests the same path with typed spell names. See [Team Test setup](../docs/team-test.md) for host configuration, joining, restarts, and troubleshooting. The local instructions below still apply when `VoiceRelayConfig.Enabled` is false.

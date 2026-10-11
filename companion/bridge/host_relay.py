@@ -1,4 +1,4 @@
-"""Host the spell relay and its temporary HTTPS Cloudflare Tunnel from this computer."""
+"""Host the spell relay with a permanent or temporary HTTPS Cloudflare Tunnel."""
 import argparse
 import hashlib
 import json
@@ -12,6 +12,8 @@ from http.server import ThreadingHTTPServer
 from pathlib import Path
 
 from relay_server import RelayStore, handler_for_relay, load_secret
+from configure_stable_relay import load_settings
+from relay_dns import relay_opener
 
 ROOT = Path(__file__).resolve().parent
 VERSION = "2026.10.0"
@@ -41,10 +43,40 @@ def write_config(url, server_token):
         repo_config.write_text(config, encoding="utf-8")
 
 
+def tunnel_command(binary, port, stable=None):
+    command = [str(binary), "tunnel", "--no-autoupdate", "--protocol", "http2"]
+    if stable:
+        return command + ["run", "--token-file", str(stable["token_file"])]
+    return command + ["--url", f"http://127.0.0.1:{port}"]
+
+
+def verify_route(url, instance_id):
+    # Confirm that this hostname reaches this host, without sending any credential.
+    opener = relay_opener(url)
+    with opener.open(url + "/health", timeout=5) as response:
+        body = json.load(response)
+        return response.status == 200 and isinstance(body, dict) and body.get("instanceId") == instance_id
+
+
+def publish_host(url, port, server_token, stable=False):
+    write_config(url, server_token)
+    (ROOT / "host-state.json").write_text(json.dumps({"url": url, "port": port, "mode": "named" if stable else "quick"}) + "\n")
+    print(f"HTTPS RELAY: {url}", flush=True)
+    print("Keep this host running. Each player runs TeamTest.cmd and enters their own pairing code.", flush=True)
+    print("Studio server config: companion/bridge/VoiceRelayConfig.generated.luau (or the generated game module).", flush=True)
+    print("Roblox secret: VOICE_RELAY_SERVER_TOKEN. RelaySecretSetup.cmd copies the existing value for you.", flush=True)
+    print(f"REQUIRED SECRET DOMAIN: {url.split('://', 1)[1]}", flush=True)
+    print("Permanent hostname: the URL and allowed Domain stay the same across restarts." if stable else
+          "Temporary hostname: update the secret's allowed Domain and game config whenever the tunnel URL changes.", flush=True)
+    print("If Studio is not syncing repo files, paste the generated module into ServerScriptService.VoiceArena.VoiceRelayConfig before Team Test.", flush=True)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--port", type=int, default=8790)
+    parser.add_argument("--quick", action="store_true", help="Use a temporary URL even when a permanent tunnel is configured")
     args = parser.parse_args()
+    stable = load_settings(args.quick)
     binary = cloudflared()
     secret_path = ROOT / "relay.local.json"
     server_token = load_secret(secret_path)
@@ -57,25 +89,27 @@ def main():
     threading.Thread(target=server.serve_forever, daemon=True).start()
     tunnel = None
     try:
-        tunnel = subprocess.Popen([str(binary), "tunnel", "--no-autoupdate", "--protocol", "http2", "--url", f"http://127.0.0.1:{args.port}"],
-                                  stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
+        tunnel = subprocess.Popen(tunnel_command(binary, args.port, stable),
+                                  stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, errors="replace",
                                   creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
         ready = threading.Event()
         log_path = ROOT / "tunnel.log"
+        redactions = [server_token, stop_token]
+        if stable:
+            redactions.append(stable["token_file"].read_text(encoding="utf-8").strip())
+            print(f"Connecting permanent tunnel for {stable['url']}...", flush=True)
         def output():
             with log_path.open("w", encoding="utf-8") as log:
                 for line in tunnel.stdout:
+                    for sensitive in redactions:
+                        line = line.replace(sensitive, "[redacted]")
                     log.write(line); log.flush()
+                    if stable and "Registered tunnel connection" in line:
+                        ready.set()
                     match = re.search(r"https://[a-z0-9-]+\.trycloudflare\.com", line)
-                    if match and not ready.is_set():
+                    if match and not stable and not ready.is_set():
                         url = match.group(0)
-                        write_config(url, server_token)
-                        (ROOT / "host-state.json").write_text(json.dumps({"url": url, "port": args.port}) + "\n")
-                        print(f"HTTPS RELAY: {url}", flush=True)
-                        print("Keep this host running. Each player runs TeamTest.cmd and enters their own pairing code.", flush=True)
-                        print("Studio server config: companion/bridge/VoiceRelayConfig.generated.luau (or the generated game module).", flush=True)
-                        print("One-time setup: add VOICE_RELAY_SERVER_TOKEN in the game's Creator Dashboard Secrets. RelaySecretSetup.cmd copies the value for you.", flush=True)
-                        print("If Studio is not syncing repo files, paste that module into ServerScriptService.VoiceArena.VoiceRelayConfig before Team Test.", flush=True)
+                        publish_host(url, args.port, server_token)
                         ready.set()
         threading.Thread(target=output, daemon=True).start()
         deadline = time.monotonic() + 60
@@ -84,9 +118,26 @@ def main():
                 raise RuntimeError("HTTPS tunnel exited. Check companion/bridge/tunnel.log")
             if time.monotonic() > deadline:
                 raise RuntimeError("HTTPS tunnel timed out. Check internet access and companion/bridge/tunnel.log")
+        if stable:
+            print("Tunnel connected. Checking the published application route (up to 10 minutes for route/DNS updates)...", flush=True)
+            deadline = time.monotonic() + 600
+            while True:
+                if stopping.is_set():
+                    return
+                if tunnel.poll() is not None:
+                    raise RuntimeError("Permanent tunnel stopped. Check companion/bridge/tunnel.log")
+                try:
+                    if verify_route(stable["url"], server.RequestHandlerClass.instance_id):
+                        break
+                except (OSError, ValueError):
+                    pass
+                if time.monotonic() > deadline:
+                    raise RuntimeError("Permanent hostname does not reach this relay. In Cloudflare, set its Published application Service URL to http://127.0.0.1:" + str(args.port) + " and retry HostRelay.cmd.")
+                stopping.wait(1)
+            publish_host(stable["url"], args.port, server_token, stable=True)
         while not stopping.wait(1):
             if tunnel.poll() is not None:
-                raise RuntimeError("HTTPS tunnel stopped. Restart HostRelay.cmd and update Studio with its new URL.")
+                raise RuntimeError("HTTPS tunnel stopped. Restart HostRelay.cmd." if stable else "HTTPS tunnel stopped. Restart HostRelay.cmd and update Studio with its new URL.")
     except KeyboardInterrupt:
         pass
     finally:

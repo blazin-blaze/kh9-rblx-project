@@ -54,7 +54,7 @@ local function refresh(force)
     status.Text = "Waiting for your console. Use New Pairing Code to reconnect."
   else
     code.Text = "RELAY OFFLINE"
-    status.Text = "Ask the host to check HostRelay.cmd."
+    status.Text = info.statusMessage or "Ask the host to check HostRelay.cmd."
   end
 end
 button.Activated:Connect(function() panel.Visible = not panel.Visible; if panel.Visible then refresh(false) end end)

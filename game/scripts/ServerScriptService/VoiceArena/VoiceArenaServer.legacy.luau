@@ -31,6 +31,15 @@ else
 end
 folder:SetAttribute("VoiceRelayEnabled", relayMode)
 local connected = false
+local connectionIssue = "connecting"
+local function connectionMessage()
+  if connectionIssue == "secret" then return "Host: check the Roblox relay secret and its allowed Domain." end
+  if connectionIssue == "credential" then return "Relay credential rejected. Host: update the Roblox secret value." end
+  if connectionIssue == "http_disabled" then return "Host: enable Allow HTTP Requests for this experience." end
+  if connectionIssue == "protocol" then return "Relay response invalid. Check the host and game versions." end
+  if connectionIssue == "connecting" then return "Waiting for the game server to reach the relay." end
+  return "Game server cannot reach the relay. Check the host URL."
+end
 local pairings, resetPairings, lastPairRequest = {}, {}, {}
 if relayMode then
   local pairingRemote = folder:FindFirstChild("GetVoicePairing") or Instance.new("RemoteFunction")
@@ -44,6 +53,7 @@ if relayMode then
     end
     local info = pairings[player] or {}
     return { url = bridgeUrl, connected = connected, voiceActive = voiceActive[player] or false,
+      statusMessage = not connected and connectionMessage() or nil,
       code = info.code or "", expiresIn = math.max(0, (info.expiresAt or 0) - now) }
   end
 end
@@ -119,7 +129,15 @@ task.spawn(function()
     local resets = {}
     for userId in pairs(resetPairings) do table.insert(resets, userId) end
     local ok, data = pcall(function()
-      local authorization = relayMode and HttpService:GetSecret(RelayConfig.SecretName):AddPrefix("Bearer ") or ("Bearer " .. bridgeToken)
+      if not HttpService.HttpEnabled then connectionIssue = "http_disabled"; error("HTTP requests disabled") end
+      local authorization
+      if relayMode then
+        connectionIssue = "secret"
+        authorization = HttpService:GetSecret(RelayConfig.SecretName):AddPrefix("Bearer ")
+      else
+        authorization = "Bearer " .. bridgeToken
+      end
+      connectionIssue = "network"
       local response = HttpService:RequestAsync({
         Url = bridgeUrl .. (relayMode and "/v1/game/poll" or "/v1/poll"), Method = "POST",
         Headers = { ["content-type"] = "application/json", ["authorization"] = authorization },
@@ -127,13 +145,17 @@ task.spawn(function()
           serverTimeMs = DateTime.now().UnixTimestampMillis, resetPairings = resets }),
         Timeout = 12,
       })
-      if not response.Success then error("Bridge HTTP " .. response.StatusCode) end
+      if not response.Success then
+        connectionIssue = response.StatusCode == 401 and "credential" or "network"
+        error("Bridge HTTP " .. response.StatusCode)
+      end
+      connectionIssue = "protocol"
       local decoded = HttpService:JSONDecode(response.Body)
       assert(type(decoded) == "table" and type(decoded.players) == "table" and type(decoded.commands) == "table", "Invalid bridge response")
       return decoded
     end)
     if ok then
-      local wasConnected = connected; connected = true; failures = 0; ack = {}
+      local wasConnected = connected; connected = true; connectionIssue = nil; failures = 0; ack = {}
       for _, userId in ipairs(resets) do resetPairings[userId] = nil end
       for _, info in ipairs(data.players) do
         if type(info) == "table" and type(info.userId) == "number" and type(info.voiceActive) == "boolean" then
@@ -166,9 +188,14 @@ task.spawn(function()
       end
       for id, time in pairs(processed) do if os.clock() - time > 60 then processed[id] = nil end end
     else
+      -- Only expose a controlled message; request errors may contain sensitive details.
+      if relayMode and connectionIssue == "network" then
+        local message = string.lower(tostring(data))
+        if message:find("secret", 1, true) or message:find("domain", 1, true) then connectionIssue = "secret" end
+      end
       failures += 1
       if connected or failures == 1 then
-        warn(relayMode and "[VoiceArena] HTTPS relay unavailable; check HostRelay.cmd, VoiceRelayConfig, the VOICE_RELAY_SERVER_TOKEN secret, and HTTP permission." or "[VoiceArena] Bridge unavailable; verify URL, token, HTTP permission, and running service.")
+        warn(relayMode and ("[VoiceArena] " .. connectionMessage() .. " Relay URL: " .. bridgeUrl) or "[VoiceArena] Bridge unavailable; verify URL, token, HTTP permission, and running service.")
         connected = false
         for _, player in ipairs(Players:GetPlayers()) do
           voiceActive[player] = false
